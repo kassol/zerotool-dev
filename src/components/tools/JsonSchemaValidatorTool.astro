@@ -1007,7 +1007,7 @@ const { tips: TIPS, ...CLIENT_S } = S;
 
   let lastResult: any = null;
   let started = false;
-  let trackTimer: ReturnType<typeof setTimeout> | null = null;
+  const trackedResults = new Map<string, string>();
   let cancelTimer: ReturnType<typeof setTimeout> | null = null;
 
   function setStatus(text: string, kind: string) {
@@ -1207,6 +1207,7 @@ const { tips: TIPS, ...CLIENT_S } = S;
     else cancelBtn.hidden = true;
   }
   async function run(manual: boolean) {
+    if (timer) { clearTimeout(timer); timer = null; }
     const size = schemaEl.value.length + dataEl.value.length + extraEl.value.length;
     if (!schemaEl.value.trim() && !dataEl.value.trim() && !extraEl.value.trim()) {
       abandon(); setBusy(false);
@@ -1222,11 +1223,13 @@ const { tips: TIPS, ...CLIENT_S } = S;
     if (lastResult) { resultEl.classList.add('jsv-stale'); copyTextBtn.hidden = copyJsonBtn.hidden = true; }
     setStatus(started ? T.validating : T.loading, 'info');
     setBusy(true);
-    const resp = await validateIn({
+    const validation = validateIn({
       schemaText: schemaEl.value, dataText: dataEl.value, extrasText: extraEl.value,
       menu: draftSel.value, formats: formatsEl.checked,
     });
-    if (!resp) return;
+    const current = seq;
+    const resp = await validation;
+    if (!resp || current !== seq) return;
     setBusy(false);
     if (resp.error) {
       clearResult();
@@ -1236,9 +1239,14 @@ const { tips: TIPS, ...CLIENT_S } = S;
     started = true;
     const res = resp.result;
     render(res);
-    if (trackTimer) clearTimeout(trackTimer);
     const action = res.state === 'valid' ? 'validate_success' : res.state === 'invalid' ? 'validate_error' : 'validate_' + res.state;
-    if (res.state !== 'empty') trackTimer = setTimeout(() => (window as any).trackTool?.(SLUG, action), manual ? 0 : 1500);
+    if (manual && res.state !== 'empty') {
+      const key = JSON.stringify(res);
+      if (trackedResults.get(action) !== key) {
+        trackedResults.set(action, key);
+        (window as any).trackTool?.(SLUG, action);
+      }
+    }
   }
   cancelBtn.addEventListener('click', () => {
     abandon(); setBusy(false); clearResult();
@@ -1263,7 +1271,10 @@ const { tips: TIPS, ...CLIENT_S } = S;
   // A file read that finishes after the box was edited, cleared or loaded again is dropped.
   const fileGen: Record<string, number> = { schema: 0, data: 0, extras: 0 };
   validateBtn.addEventListener('click', () => run(true));
-  ([['schema', schemaEl], ['data', dataEl], ['extras', extraEl]] as [string, HTMLTextAreaElement][]).forEach(([side, ta]) => ta.addEventListener('input', () => { fileGen[side]++; markStale(); schedule(); }));
+  ([['schema', schemaEl], ['data', dataEl], ['extras', extraEl]] as [string, HTMLTextAreaElement][]).forEach(([side, ta]) => {
+    ta.addEventListener('input', () => { fileGen[side]++; abandon(); setBusy(false); markStale(); schedule(); });
+    ta.addEventListener('change', () => run(true));
+  });
   draftSel.addEventListener('change', () => { savePrefs(); run(true); });
   formatsEl.addEventListener('change', () => { savePrefs(); run(true); });
   exampleSel.addEventListener('change', () => {
@@ -1290,6 +1301,8 @@ const { tips: TIPS, ...CLIENT_S } = S;
   }));
   async function loadFile(file: File, side: string) {
     const gen = ++fileGen[side];
+    abandon(); setBusy(false); markStale();
+    if (timer) { clearTimeout(timer); timer = null; }
     if (file.size > FILE_LIMIT) { setStatus(fmt(T.fileTooBig, { name: file.name }), 'error'); return; }
     let text: string;
     try { text = await file.text(); } catch {

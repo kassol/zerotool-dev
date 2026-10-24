@@ -557,6 +557,30 @@ function streamFixture() { const tracks = [{ stopped: 0, stop() { this.stopped++
 async function startCapture(p) { const n = p.mediaJobs.length; p.get('cbs-capture').click(); await microtasks(); return p.mediaJobs[n]; }
 async function releaseStream(p, job, fixture) { const n = p.videos.length; job.resolve(fixture.stream); await microtasks(); return p.videos[n]; }
 function clearImage(p) { p.clear('cbs-open'); }
+// S2-10g extension: palette analysis is live, usage follows valid committed results.
+{
+  const p = page(), events = () => p.tracks.filter(args => args[1] === 'palette');
+  eq('GA palette startup silent', p.tracks, []);
+  p.colors(); p.flushAll();
+  check('GA palette live table retained', !p.get('cbs-table-wrap').hidden);
+  eq('GA palette typing silent', events(), []);
+  p.get('cbs-colors').dispatch('change');
+  eq('GA palette committed historical event', events(), [['color-blindness-simulator','palette']]);
+  p.get('cbs-colors').dispatch('change'); eq('GA palette unchanged result deduplicated', events().length, 1);
+  p.colors('invalid\n#FF0000\n#00FF00'); p.flushAll(); p.get('cbs-colors').dispatch('change');
+  eq('GA palette invalid partial input silent', events().length, 1);
+  p.colors('#FF0000'); p.flushAll(); p.get('cbs-colors').dispatch('change');
+  eq('GA palette insufficient colors silent', events().length, 1);
+  p.colors('#0000FF\n#FFFF00'); p.get('cbs-colors').dispatch('change');
+  eq('GA palette changed valid result counted', events().length, 2);
+  p.get('cbs-severity').value = '3'; p.get('cbs-severity').dispatch('input'); p.flushAll();
+  eq('GA palette severity live preview silent', events().length, 2);
+  p.get('cbs-severity').dispatch('change');
+  eq('GA palette committed changed severity counted', events().length, 3);
+  const restored = page('en', {mode:'colors',view:'all',compareType:'deuteranopia',severity:0.3}); restored.flushAll();
+  eq('GA restored palette preferences silent', restored.tracks, []);
+}
+
 for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, true]) await scenario(lang + ' synchronous clear order ' + shellFirst, async () => {
   const p = page(lang, null, shellFirst), initial = p.snapshot();
   check(lang + ' startup sample visible', initial.canvasWidth === 640 && initial.infoHidden && initial.status === '' && !initial.gridHidden);

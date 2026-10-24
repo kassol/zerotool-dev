@@ -916,6 +916,79 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check('page: an edit after an empty result keeps the empty-state text until the run', status() === 'none | ' + T.empty, status());
 }
 
+// S2-10g: real page input/buttons, real validation, controlled Worker delivery.
+{
+  const { loadPage } = await import('./astro-page-harness.mjs');
+  const jobs = [], tracks = [];
+  class QueueWorker {
+    postMessage(message) { jobs.push({ worker: this, message }); }
+    terminate() {}
+  }
+  const page = loadPage('src/components/tools/JsonSchemaValidatorTool.astro', {
+    dataset: { 'jsv-wrap': { strings: JSON.stringify(T) } },
+    preset: { 'jsv-draft': 'auto' },
+    globals: {
+      trackTool: (...args) => tracks.push(args),
+      require: name => name.endsWith('?worker') ? QueueWorker
+        : require(name.startsWith('.') ? join(root, 'src/components/tools', name) : name),
+    },
+  });
+  page.el('jsv-draft').value = 'auto';
+  page.el('jsv-formats').checked = true;
+  const settle = async () => { await Promise.resolve(); page.flush(); await Promise.resolve(); };
+  const reply = async (job = jobs.shift(), error = false) => {
+    check('GA validator has a pending browser Worker request', !!job);
+    if (!job) return;
+    const { worker, message } = job;
+    if (error) worker.onerror({ message: 'failed Worker' });
+    else worker.onmessage({ data: { id: message.id, result: E.runValidation(lib, message.input, T, null) } });
+    await settle();
+  };
+  await reply();
+  check('GA validator boot example completes its real validation', page.el('jsv-status').classList.contains('success'));
+  check('GA validator boot example is silent', tracks.length === 0, tracks);
+  page.el('jsv-schema').value = '{"type":"integer"}';
+  page.el('jsv-schema').dispatch('input');
+  page.el('jsv-data').value = '42';
+  page.el('jsv-data').dispatch('input');
+  page.flush(); await reply();
+  check('GA validator live successful preview remains', page.el('jsv-status').classList.contains('success'));
+  check('GA validator typing is silent', tracks.length === 0, tracks);
+  page.el('jsv-data').dispatch('change');
+  if (jobs.length) await reply();
+  check('GA validator committed success preserves name and action', JSON.stringify(tracks) === JSON.stringify([['json-schema-validator', 'validate_success']]), tracks);
+  page.el('jsv-validate').click(); await reply();
+  check('GA validator unchanged result is deduplicated', tracks.length === 1, tracks);
+  page.el('jsv-data').value = '"bad"'; page.el('jsv-data').dispatch('input'); page.flush();
+  await reply();
+  check('GA validator invalid live preview is silent', tracks.length === 1 && page.el('jsv-status').classList.contains('error'), tracks);
+  page.el('jsv-data').dispatch('change'); if (jobs.length) await reply();
+  check('GA validator completed invalid verdict preserves error action', tracks.at(-1)?.[1] === 'validate_error' && tracks.length === 2, tracks);
+  page.el('jsv-data').value = '7'; page.el('jsv-data').dispatch('change');
+  if (!jobs.length) page.el('jsv-validate').click();
+  const obsolete = jobs.shift();
+  page.el('jsv-data').value = '9'; page.el('jsv-data').dispatch('input');
+  await reply(obsolete);
+  check('GA validator edited input invalidates a reply before debounce', tracks.length === 2 && !page.el('jsv-status').classList.contains('success'), tracks);
+  page.flush();
+  if (jobs.length) await reply();
+  page.el('jsv-validate').click(); await reply(undefined, true);
+  check('GA validator Worker failure is silent', tracks.length === 2, tracks);
+  page.el('jsv-data').value = '{}'; page.el('jsv-validate').click();
+  const beforeFile = jobs.shift();
+  let finishFile;
+  page.el('jsv-file').files = [{ size: 2, name: 'data.json', text: () => new Promise(resolve => { finishFile = resolve; }) }];
+  page.el('jsv-file').dispatch('change');
+  await reply(beforeFile);
+  check('GA validator opening a file invalidates the previous validation', tracks.length === 2, tracks);
+  finishFile('42'); await settle();
+  if (jobs.length) await reply();
+  check('GA validator current file still validates and deduplicates its result', tracks.length === 2 && page.el('jsv-status').classList.contains('success'), tracks);
+  page.el('jsv-schema').value = ''; page.el('jsv-data').value = ''; page.el('jsv-extra').value = '';
+  page.el('jsv-data').dispatch('change'); await settle();
+  check('GA validator empty commit is silent', tracks.length === 2, tracks);
+}
+
 // ---------- v2 page layout (DESIGN.md "Tool Pages v2", kind: analyze) ----------
 {
   const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script>'));

@@ -1410,8 +1410,9 @@ const MODE_LIST = ['json', 'js', 'java', 'c', 'python', 'html', 'xml', 'csv', 's
         inputEl.placeholder = state.dir === 'escape' ? t.phEscape : t.phUnescape;
       }
 
-      var tracked = {};
-      function run() {
+      var tracked = Object.create(null);
+      function run(track) {
+        clearTimeout(timer);
         var text = inputEl.value;
         if (!text) { outputEl.value = ''; setStatus('', ''); return; }
         var r = convert(state.mode, state.dir, text, state.opts, env);
@@ -1425,7 +1426,10 @@ const MODE_LIST = ['json', 'js', 'java', 'c', 'python', 'html', 'xml', 'csv', 's
         var notes = r.notes.map(function (n) { return fill(t.note[noteKey(n)] || n.key, n); });
         setStatus(notes.length ? msg + ' ' + notes.join(' ') : msg, notes.length ? 'info' : 'success');
         var tag = state.mode + '_' + state.dir;
-        if (!tracked[tag] && window.trackTool) { tracked[tag] = true; window.trackTool('string-escape', tag); }
+        if (track === true && tracked[tag] !== r.output && window.trackTool) {
+          tracked[tag] = r.output;
+          window.trackTool('string-escape', tag);
+        }
       }
 
       var timer = null;
@@ -1433,24 +1437,25 @@ const MODE_LIST = ['json', 'js', 'java', 'c', 'python', 'html', 'xml', 'csv', 's
         clearTimeout(timer);
         timer = setTimeout(run, inputEl.value.length > 200000 ? 300 : 80);
       });
+      inputEl.addEventListener('change', function () { run(true); });
 
       modeEl.addEventListener('change', function () {
         state.mode = modeEl.value;
-        applyUI(); savePrefs(); run();
+        applyUI(); savePrefs(); run(true);
       });
       dirBtns.forEach(function (b) {
         b.addEventListener('click', function () {
           var d = b.getAttribute('data-dir');
           if (d === state.dir) return;
           state.dir = d;
-          applyUI(); savePrefs(); run();
+          applyUI(); savePrefs(); run(true);
         });
       });
       optEls.forEach(function (el) {
         el.addEventListener('change', function () {
           var key = el.getAttribute('data-opt');
           state.opts[key] = el.type === 'checkbox' ? el.checked : el.value;
-          savePrefs(); run();
+          savePrefs(); run(true);
         });
       });
 
@@ -1458,7 +1463,7 @@ const MODE_LIST = ['json', 'js', 'java', 'c', 'python', 'html', 'xml', 'csv', 's
         var r = outputEl.value;
         state.dir = state.dir === 'escape' ? 'unescape' : 'escape';
         inputEl.value = r;
-        applyUI(); savePrefs(); run();
+        applyUI(); savePrefs(); run(true);
         inputEl.focus();
       });
       document.getElementById('se-clear').addEventListener('click', function () {
@@ -1475,7 +1480,7 @@ const MODE_LIST = ['json', 'js', 'java', 'c', 'python', 'html', 'xml', 'csv', 's
           sample = e.error ? '' : e.output;
         }
         inputEl.value = sample;
-        run();
+        run(true);
       });
       // The page-wide Ctrl/Cmd+L shortcut empties the text boxes; clear the status too.
       document.addEventListener('keydown', function (e) {

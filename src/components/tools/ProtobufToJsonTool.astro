@@ -2650,7 +2650,9 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
       if (['decode', 'encode', 'sample'].indexOf(prefs.mode) < 0) prefs.mode = 'decode';
       function savePrefs() { if (window.ztPersist) window.ztPersist.save(SLUG, prefs); }
 
-      var state = { ctx: null, schemaErr: null, files: [], gen: 0, timer: 0, trackTimer: 0, outText: '', lastBytes: null };
+      var state = { ctx: null, schemaErr: null, files: [], gen: 0, timer: 0, schemaDirty: false,
+        fileGen: { schema: 0, bytes: 0 }, outText: '', lastBytes: null };
+      var trackedResults = Object.create(null);
 
       function fmt(tpl, args) {
         return String(tpl).replace(/\{(\w+)\}/g, function (m, k) { return args && args[k] !== undefined && args[k] !== null ? String(args[k]) : m; });
@@ -2720,9 +2722,18 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
         setStatus(text, 'none');
         setNotes([]);
       }
-      function track() {
-        clearTimeout(state.trackTimer);
-        state.trackTimer = setTimeout(function () { if (window.trackTool) window.trackTool('protobuf_to_json', prefs.mode); }, 1500);
+      function trackResult(committed, gen, action) {
+        if (!committed || gen !== state.gen) return;
+        var key = JSON.stringify([els.type.value, state.outText]);
+        if (trackedResults[action] === key) return;
+        trackedResults[action] = key;
+        if (window.trackTool) window.trackTool('protobuf_to_json', action);
+      }
+      function invalidate(side) {
+        state.gen++;
+        if (!side || side === 'schema') state.fileGen.schema++;
+        if (!side || side === 'bytes') state.fileGen.bytes++;
+        clearTimeout(state.timer);
       }
 
       // ---------- schema ----------
@@ -2733,6 +2744,7 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
         return files;
       }
       function rebuildSchema() {
+        state.schemaDirty = false;
         var files = schemaFiles();
         state.ctx = null;
         state.schemaErr = null;
@@ -2772,7 +2784,7 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
       function decodeOpts() { return { protoNames: prefs.names === 'proto', defaults: prefs.defaults, enumNumbers: prefs.enumNum }; }
       function indentOf() { return parseInt(prefs.indent, 10) || 0; }
 
-      function runDecode(gen) {
+      function runDecode(gen, committed) {
         var text = els.bytes.value;
         if (!text.trim()) return showEmpty(S.st.empty);
         var parsed, frames;
@@ -2796,17 +2808,17 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
           });
           notes.unshift(fmt(S.note.grpcFrames, { count: payloads.length }));
         }
-        if (!compressed.length) return finishDecode(gen, parsed, payloads, notes, !!frames);
+        if (!compressed.length) return finishDecode(gen, parsed, payloads, notes, !!frames, committed);
         Promise.all(compressed.map(function (c) {
           return gunzip(payloads[c.i]).then(function (b) { payloads[c.i] = b; notes.push(fmt(S.note.grpcGunzip, { i: c.i + 1 })); }, function (err) {
             throw pbErr('grpcCompressed', { offset: c.offset, detail: String(err && err.message || err) });
           });
         })).then(function () {
-          if (gen === state.gen) finishDecode(gen, parsed, payloads, notes, true);
+          if (gen === state.gen) finishDecode(gen, parsed, payloads, notes, true, committed);
         }, function (e) { if (gen === state.gen) showError(e, notes); });
       }
 
-      function finishDecode(gen, parsed, payloads, notes, framed) {
+      function finishDecode(gen, parsed, payloads, notes, framed, committed) {
         var fmtName = S.fmtName[parsed.format] || parsed.format;
         var typeName = els.type.value;
         var total = payloads.reduce(function (s, p) { return s + p.length; }, 0);
@@ -2830,7 +2842,7 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
           }
           setStatus(fmt(S.st.decodedRaw, { n: total, fmt: fmtName }), 'success');
           setNotes(notes);
-          track();
+          trackResult(committed, gen, 'decode');
           return;
         }
         var ctx = state.ctx, opts = decodeOpts(), out = [];
@@ -2860,10 +2872,10 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
           ? fmt(S.st.decodedFrames, { count: payloads.length, type: typeName })
           : fmt(S.st.decoded, { n: total, type: typeName, fmt: fmtName }), 'success');
         setNotes(notes.concat(schemaWarn));
-        track();
+        trackResult(committed, gen, 'decode');
       }
 
-      function runEncode() {
+      function runEncode(gen, committed) {
         var ctx = ctxOrStatus(S.st.needSchema);
         if (!ctx) return;
         var text = els.json.value;
@@ -2880,10 +2892,10 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
         showText(formatBytes(bytes, prefs.outFmt));
         setStatus(fmt(S.st.encoded, { type: els.type.value, n: n }), 'success');
         setNotes(ctx.notes.map(noteText).concat(schemaNotes(ctx)));
-        track();
+        trackResult(committed, gen, 'encode');
       }
 
-      function runSample() {
+      function runSample(gen, committed) {
         var ctx = ctxOrStatus(S.st.needSchemaSample);
         if (!ctx) return;
         var tree;
@@ -2892,18 +2904,19 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
         showText(stringifyJson(tree, indentOf(), false), stringifyJson(tree, indentOf(), true));
         setStatus(fmt(S.st.sampled, { type: els.type.value }), 'success');
         setNotes(ctx.notes.map(noteText).concat(schemaNotes(ctx)));
-        track();
+        trackResult(committed, gen, 'sample');
       }
 
-      function run() {
+      function run(committed) {
         clearTimeout(state.timer);
         var gen = ++state.gen;
         if (!pb) return showEmpty('protobuf.js failed to load.');
-        if (prefs.mode === 'encode') runEncode();
-        else if (prefs.mode === 'sample') runSample();
-        else runDecode(gen);
+        if (state.schemaDirty) rebuildSchema();
+        if (prefs.mode === 'encode') runEncode(gen, committed === true);
+        else if (prefs.mode === 'sample') runSample(gen, committed === true);
+        else runDecode(gen, committed === true);
       }
-      function schedule(ms) { clearTimeout(state.timer); state.timer = setTimeout(run, ms); }
+      function schedule(ms, side) { invalidate(side); state.timer = setTimeout(run, ms); }
 
       // ---------- mode and options ----------
       function setMode(mode) {
@@ -2915,10 +2928,11 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
       els.modes.forEach(function (b) {
         b.addEventListener('click', function () {
           var mode = b.getAttribute('data-mode');
+          invalidate();
           if (mode === 'encode' && !els.json.value.trim()) fillJsonFromBytes();
           setMode(mode);
           savePrefs();
-          run();
+          run(true);
         });
       });
 
@@ -2941,19 +2955,26 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
         el.addEventListener('change', function () {
           prefs[key] = isCheck ? el.checked : el.value;
           savePrefs();
-          run();
+          run(true);
         });
       }
       bindOpt(els.fmt, 'fmt'); bindOpt(els.grpc, 'grpc'); bindOpt(els.names, 'names'); bindOpt(els.defaults, 'defaults', true);
       bindOpt(els.enumNum, 'enumNum', true); bindOpt(els.rawView, 'rawView'); bindOpt(els.indent, 'indent');
       bindOpt(els.outFmt, 'outFmt'); bindOpt(els.frame, 'frame', true); bindOpt(els.ignoreUnknown, 'ignoreUnknown', true);
 
-      els.type.addEventListener('change', function () { syncRawFlag(); run(); });
-      els.bytes.addEventListener('input', function () { schedule(250); });
+      els.type.addEventListener('change', function () { syncRawFlag(); run(true); });
+      els.bytes.addEventListener('input', function () { schedule(250, 'bytes'); });
       els.json.addEventListener('input', function () { schedule(300); });
       els.schema.addEventListener('input', function () {
-        clearTimeout(state.schemaTimer);
-        state.schemaTimer = setTimeout(function () { rebuildSchema(); run(); }, 400);
+        state.schemaDirty = true;
+        schedule(400, 'schema');
+      });
+      [els.bytes, els.json, els.schema].forEach(function (el) {
+        el.addEventListener('change', function () {
+          invalidate(el === els.bytes ? 'bytes' : el === els.schema ? 'schema' : null);
+          if (el === els.schema) state.schemaDirty = true;
+          run(true);
+        });
       });
 
       // ---------- files ----------
@@ -2969,7 +2990,7 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
           x.className = 'pbj-file-x';
           x.textContent = '×';
           x.setAttribute('aria-label', fmt(S.removeFile, { name: f.name }));
-          x.addEventListener('click', function () { state.files.splice(i, 1); renderFiles(); rebuildSchema(); run(); });
+          x.addEventListener('click', function () { invalidate('schema'); state.files.splice(i, 1); renderFiles(); rebuildSchema(); run(true); });
           li.appendChild(name);
           li.appendChild(x);
           els.files.appendChild(li);
@@ -2979,9 +3000,12 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
       function addProtoFiles(list) {
         var arr = Array.prototype.slice.call(list || []);
         if (!arr.length) return;
+        invalidate('schema');
+        var gen = state.fileGen.schema;
         Promise.all(arr.map(function (file) {
           return file.text().then(function (text) { return { name: file.webkitRelativePath || file.name, text: text }; });
         })).then(function (loaded) {
+          if (gen !== state.fileGen.schema) return;
           loaded.forEach(function (f) {
             var i = state.files.findIndex(function (g) { return g.name === f.name; });
             if (i >= 0) state.files[i] = f; else state.files.push(f);
@@ -2992,17 +3016,24 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
           }
           renderFiles();
           rebuildSchema();
-          run();
+          run(true);
+        }, function (e) {
+          if (gen === state.fileGen.schema) showError(e);
         });
       }
       function loadBinary(file) {
         if (!file) return;
+        invalidate('bytes');
+        var gen = state.fileGen.bytes;
         if (file.size > 2 * 1024 * 1024) { showError(pbErr('fileTooBig', { name: file.name, size: file.size })); return; }
         file.arrayBuffer().then(function (buf) {
+          if (gen !== state.fileGen.bytes) return;
           els.bytes.value = formatBytes(new Uint8Array(buf), 'hex');
           if (prefs.fmt !== 'auto' && prefs.fmt !== 'hex') { prefs.fmt = 'auto'; els.fmt.value = 'auto'; savePrefs(); }
           if (prefs.mode !== 'decode') setMode('decode');
-          run();
+          run(true);
+        }, function (e) {
+          if (gen === state.fileGen.bytes) showError(e);
         });
       }
       els.openBin.addEventListener('click', function () { els.binFile.click(); });
@@ -3058,14 +3089,16 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
       });
       els.use.addEventListener('click', function () {
         if (!state.outText) return;
+        invalidate();
         els.json.value = state.outText;
         setMode('encode');
         savePrefs();
-        run();
+        run(true);
         els.json.focus();
       });
 
-      function loadExample() {
+      function loadExample(committed) {
+        invalidate();
         els.schema.value = EXAMPLE_SCHEMA;
         els.bytes.value = EXAMPLE_BYTES;
         state.files = [];
@@ -3075,10 +3108,11 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
         syncRawFlag();
         els.json.value = '';
         fillJsonFromBytes();
-        run();
+        run(committed === true);
       }
-      els.example.addEventListener('click', loadExample);
+      els.example.addEventListener('click', function () { loadExample(true); });
       els.clear.addEventListener('click', function () {
+        invalidate();
         els.schema.value = '';
         els.bytes.value = '';
         els.json.value = '';
@@ -3091,6 +3125,7 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
       document.addEventListener('keydown', function (e) {
         if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && document.querySelector('.tool-widget') &&
           document.querySelector('.tool-widget').contains(document.activeElement)) {
+          invalidate();
           setTimeout(function () { state.files = []; renderFiles(); rebuildSchema(); run(); }, 0);
         }
       });

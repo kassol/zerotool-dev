@@ -1317,7 +1317,14 @@ const DEFAULT_COLORS = {
       function hexOf(rgb) { return '#' + rgb.map(function (v) { return (v < 16 ? '0' : '') + v.toString(16); }).join('').toUpperCase(); }
       function textOn(rgb) { return relativeLuminance(rgb[0], rgb[1], rgb[2]) > 0.179 ? '#000000' : '#ffffff'; }
 
-      var colorsTimer = 0;
+      var lastTrackedPalette;
+      function trackPalette() {
+        if (state.mode !== 'colors' || tableWrap.hidden || statusEl.classList.contains('is-error')) return;
+        var resultKey = table.textContent;
+        if (resultKey === lastTrackedPalette) return;
+        lastTrackedPalette = resultKey;
+        track('palette');
+      }
       function renderColors() {
         var parsed = parseColorList(colorsEl.value);
         var msgs = [];
@@ -1392,9 +1399,9 @@ const DEFAULT_COLORS = {
       colorsEl.addEventListener('input', function () {
         beginInput();
         renderColors();
-        clearTimeout(colorsTimer);
-        colorsTimer = setTimeout(function () { track('palette'); }, 1500);
       });
+
+      colorsEl.addEventListener('change', function () { renderColors(); trackPalette(); });
 
       // ── mode, view, severity ──
       function applyView() {
@@ -1443,15 +1450,16 @@ const DEFAULT_COLORS = {
           if (state.mode === 'colors') renderColors(); else renderAnomalyOnly();
         });
       });
-      severityInput.addEventListener('change', savePrefs);
+      severityInput.addEventListener('change', function () {
+        savePrefs();
+        if (state.mode === 'colors') { renderColors(); trackPalette(); }
+      });
 
       // Ctrl/⌘+L resets current input; ToolLayout keeps saved preferences.
       document.addEventListener('keydown', function (e) {
         if (!(e.metaKey || e.ctrlKey) || (e.key !== 'l' && e.key !== 'L') || !wrap.contains(document.activeElement)) return;
         e.preventDefault();
         if (table.contains(document.activeElement)) colorsEl.focus();
-        clearTimeout(colorsTimer);
-        colorsTimer = 0;
         if (sevFrame) cancelAnimationFrame(sevFrame);
         sevFrame = 0;
         fileInput.value = '';
