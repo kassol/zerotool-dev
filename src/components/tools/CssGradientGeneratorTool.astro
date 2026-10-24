@@ -7,6 +7,7 @@ const { lang = 'en' } = Astro.props;
 // strings:start
 const STRINGS = {
   en: {
+    invalidRange: "Enter whole angles from 0 to 360 and stop positions from 0 to 100.",
     type: 'Type',
     linear: 'Linear',
     radial: 'Radial',
@@ -48,6 +49,7 @@ const STRINGS = {
     },
   },
   zh: {
+    invalidRange: "角度须为 0–360 的整数，色标位置须为 0–100 的整数。",
     type: '类型',
     linear: '线性',
     radial: '径向',
@@ -89,6 +91,7 @@ const STRINGS = {
     },
   },
   ja: {
+    invalidRange: "角度は 0～360、カラーストップの位置は 0～100 の整数で入力してください。",
     type: 'タイプ',
     linear: 'リニア',
     radial: 'ラジアル',
@@ -130,6 +133,7 @@ const STRINGS = {
     },
   },
   ko: {
+    invalidRange: "각도는 0~360, 색상 지점 위치는 0~100의 정수로 입력하세요.",
     type: '유형',
     linear: '선형',
     radial: '방사형',
@@ -179,6 +183,7 @@ const L = STRINGS[lang] ?? STRINGS.en;
 
 <div
   class="cgg-wrap"
+  data-invalid-range={L.invalidRange}
   data-copy={L.copy}
   data-copied={L.copied}
   data-copy-failed={L.copyFailed}
@@ -339,7 +344,7 @@ const L = STRINGS[lang] ?? STRINGS.en;
           currentType = tab.dataset.type;
           wrap.querySelectorAll('.cgg-panel').forEach(function (p) { p.classList.add('cgg-panel--hidden'); });
           wrap.querySelector('#cgg-panel-' + currentType).classList.remove('cgg-panel--hidden');
-          update();
+          commitGeneration();
         });
       });
 
@@ -352,9 +357,8 @@ const L = STRINGS[lang] ?? STRINGS.en;
         update();
       });
       angleNumEl.addEventListener('input', function () {
-        var v = Math.min(360, Math.max(0, parseInt(angleNumEl.value) || 0));
-        angleRangeEl.value = v;
-        updateDirButtons(v);
+        var v = readWhole(angleNumEl.value, 360);
+        if (v !== null) { angleRangeEl.value = v; updateDirButtons(v); }
         update();
       });
 
@@ -366,7 +370,7 @@ const L = STRINGS[lang] ?? STRINGS.en;
           angleRangeEl.value = deg;
           angleNumEl.value   = deg;
           updateDirButtons(deg);
-          update();
+          commitGeneration();
         });
       });
 
@@ -391,8 +395,8 @@ const L = STRINGS[lang] ?? STRINGS.en;
         update();
       });
       conicFromNumEl.addEventListener('input', function () {
-        var v = Math.min(360, Math.max(0, parseInt(conicFromNumEl.value) || 0));
-        conicFromRangeEl.value = v;
+        var v = readWhole(conicFromNumEl.value, 360);
+        if (v !== null) conicFromRangeEl.value = v;
         update();
       });
       conicPosEl.addEventListener('change', update);
@@ -436,7 +440,7 @@ const L = STRINGS[lang] ?? STRINGS.en;
           if (getStopCount() <= 2) return;
           stopEl.remove();
           updateRemoveButtons();
-          update();
+          commitGeneration();
         });
       }
 
@@ -450,9 +454,10 @@ const L = STRINGS[lang] ?? STRINGS.en;
 
       function sortStops() {
         var stops = Array.prototype.slice.call(stopsEl.querySelectorAll('.cgg-stop'));
+        if (stops.some(function (s) { return readWhole(s.querySelector('.cgg-stop-pos').value, 100) === null; })) return;
         stops.sort(function (a, b) {
-          return (parseInt(a.querySelector('.cgg-stop-pos').value) || 0) -
-                 (parseInt(b.querySelector('.cgg-stop-pos').value) || 0);
+          return Number(a.querySelector('.cgg-stop-pos').value) -
+                 Number(b.querySelector('.cgg-stop-pos').value);
         });
         /* Array.prototype.sort is stable, so equal positions keep their order */
         stops.forEach(function (s) { stopsEl.appendChild(s); });
@@ -478,7 +483,7 @@ const L = STRINGS[lang] ?? STRINGS.en;
         bindStop(stopEl);
         sortStops();
         updateRemoveButtons();
-        update();
+        commitGeneration();
       });
 
       /* Build gradient CSS */
@@ -486,7 +491,7 @@ const L = STRINGS[lang] ?? STRINGS.en;
         var stops = stopsEl.querySelectorAll('.cgg-stop');
         var list = [];
         stops.forEach(function (s) {
-          list.push({ color: s.querySelector('.cgg-stop-picker').value, pos: s.querySelector('.cgg-stop-pos').value });
+          list.push({ color: s.querySelector('.cgg-stop-picker').value, pos: Number(s.querySelector('.cgg-stop-pos').value) });
         });
         return stopList(list);
       }
@@ -525,12 +530,12 @@ const L = STRINGS[lang] ?? STRINGS.en;
       function buildGradient() {
         var stops = buildStopList().join(', ');
         if (currentType === 'linear') {
-          return gradientCss('linear', { angle: angleRangeEl.value }, stops);
+          return gradientCss('linear', { angle: Number(angleNumEl.value) }, stops);
         }
         if (currentType === 'radial') {
           return gradientCss('radial', { shape: radialShapeEl.value, position: radialPosEl.value }, stops);
         }
-        return gradientCss('conic', { from: conicFromRangeEl.value, position: conicPosEl.value }, stops);
+        return gradientCss('conic', { from: Number(conicFromNumEl.value), position: conicPosEl.value }, stops);
       }
 
       /* Syntax highlight */
@@ -546,8 +551,33 @@ const L = STRINGS[lang] ?? STRINGS.en;
       var codeEl    = wrap.querySelector('#cgg-code');
       var copyBtn   = wrap.querySelector('#cgg-copy');
 
+      function readWhole(value, max) {
+        var raw = String(value).trim(), n = Number(raw);
+        return /^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(raw) && Number.isInteger(n) && n >= 0 && n <= max ? n : null;
+      }
+
       function update() {
         invalidateCopy();
+        var badAngle = currentType === 'linear' && readWhole(angleNumEl.value, 360) === null;
+        var badFrom = currentType === 'conic' && readWhole(conicFromNumEl.value, 360) === null;
+        var badStop = false;
+        angleNumEl.setAttribute('aria-invalid', String(badAngle));
+        conicFromNumEl.setAttribute('aria-invalid', String(badFrom));
+        stopsEl.querySelectorAll('.cgg-stop-pos').forEach(function (el) {
+          var bad = readWhole(el.value, 100) === null;
+          el.setAttribute('aria-invalid', String(bad));
+          if (bad) badStop = true;
+        });
+        if (badAngle || badFrom || badStop) {
+          copyBtn.disabled = true;
+          previewEl.hidden = true;
+          previewEl.style.background = '';
+          codeEl.textContent = '';
+          wrap.dataset.empty = 'true';
+          statusEl.textContent = wrap.dataset.invalidRange;
+          statusEl.className = 'tool-status error';
+          return;
+        }
         copyBtn.disabled = false;
         previewEl.hidden = false;
         wrap.dataset.empty = 'false';
@@ -555,6 +585,13 @@ const L = STRINGS[lang] ?? STRINGS.en;
         previewEl.style.background = grad;
         var raw = '.gradient {\n  background: ' + grad + ';\n}';
         codeEl.innerHTML = highlight(raw);
+        return true;
+      }
+
+      function commitGeneration() {
+        if (!update()) return;
+        var hexFields = Array.prototype.slice.call(stopsEl.querySelectorAll('.cgg-stop-hex'));
+        if (hexFields.some(function (el) { return !readHex(el.value); })) return;
         window.trackTool && window.trackTool('css-gradient-generator', 'generate');
       }
 
@@ -562,13 +599,15 @@ const L = STRINGS[lang] ?? STRINGS.en;
       var copyTimer = 0;
       var statusEl = wrap.querySelector('#cgg-status');
 
+      wrap.addEventListener('change', commitGeneration);
+
       function invalidateCopy() {
         copyRevision++;
         clearTimeout(copyTimer);
         copyTimer = 0;
         copyBtn.textContent = COPY_LABEL;
         copyBtn.setAttribute('aria-label', COPY_LABEL);
-        if (statusEl) statusEl.textContent = '';
+        if (statusEl) { statusEl.textContent = ''; statusEl.className = 'tool-status'; }
       }
 
       copyBtn.addEventListener('click', function () {

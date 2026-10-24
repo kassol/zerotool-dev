@@ -90,7 +90,8 @@ function open(s,lang='en',shellFirst=false){
     Object.defineProperty(n,'innerHTML',{get(){return this._html||'';},set(v){this._html=String(v);this.childNodes=parseFragment(String(v)).childNodes;for(const c of this.childNodes){c.parentNode=this;adapt(c);}}});
     n.setAttribute=(k,v)=>{attrs[k]=String(v);};n.getAttribute=k=>attrs[k]??null;n.removeAttribute=k=>{delete attrs[k];};Object.defineProperty(n,'src',{get:()=>attrs.src||'',set:v=>{attrs.src=String(v);}});n.scrollIntoView=()=>{};
     n.addEventListener=(k,f)=>(handlers[k]??=[]).push(f);
-    n.dispatch=(type,init={})=>{const e={type,target:n,currentTarget:n,defaultPrevented:false,cancelBubble:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.cancelBubble=true;},...init};for(const f of handlers[type]||[])f.call(n,e);if(!e.cancelBubble)document.dispatch(type,e);return e;};
+    n.handlers=handlers;
+    n.dispatch=(type,init={})=>{const e={type,target:n,currentTarget:n,defaultPrevented:false,cancelBubble:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.cancelBubble=true;},...init};for(let current=n;current&&!e.cancelBubble;current=current.parentNode){e.currentTarget=current;for(const f of current.handlers?.[type]||[])f.call(current,e);}if(!e.cancelBubble)document.dispatch(type,e);return e;};
     n.click=()=>{if(!n.disabled)n.dispatch('click');};n.focus=()=>{document.activeElement=n;};n.select=()=>{};n.remove=()=>{};n.appendChild=c=>c;
     n.contains=x=>{while(x){if(x===n)return true;x=x.parentNode;}return false;};
     Object.defineProperty(n,'lastChild',{get:()=>n.childNodes.at(-1)});Object.defineProperty(n,'children',{get:()=>n.childNodes.filter(c=>c.tagName)});
@@ -108,16 +109,51 @@ function open(s,lang='en',shellFirst=false){
   function query(sel,within){return queryAll(sel,within)[0]||null;}
   const docHandlers={};document={currentScript:null,documentElement:{lang},getElementById:id=>ids.get(id)||null,querySelector:sel=>sel==='.tool-widget'?wrap:sel==='.tool-widget .btn-primary'?query('.btn-primary',wrap):query(sel),querySelectorAll:sel=>queryAll(sel),addEventListener:(k,f)=>(docHandlers[k]??=[]).push(f),dispatch(type,e){for(const f of docHandlers[type]||[])f(e);},body:{appendChild:c=>c},createElement:tag=>{const n=parseFragment('<'+tag+'></'+tag+'>').childNodes[0];adapt(n);return n;},execCommand:()=>false};
   adapt(tree);const wrap=query(s.root);wrap.closest=()=>wrap;
-  const timers=[],requests=[],assertions=[],persist={cleared:[],saved:[]},events={};let now=0,seq=0;
-  const h={s,L,document,ids,timers,requests,assertions,persist,query:sel=>query(sel,wrap),all:sel=>queryAll(sel,wrap),unhandled:[],syncErrors:[],el:id=>{if(!ids.has(id))throw new Error('Missing actual element '+id);return ids.get(id);},input(id,value,type='input'){const e=this.el(id);e.value=String(value);e.dispatch(type);},click(id=s.copy){try{this.el(id).click();}catch(e){this.syncErrors.push(String(e));}},key(key='l',focus=s.input,meta=false){document.activeElement=focus==='outside'?{}:this.el(focus);document.dispatch('keydown',{key,ctrlKey:!meta,metaKey:meta,preventDefault(){},stopPropagation(){}});},advance(ms){now+=ms;for(const t of timers.filter(t=>!t.cancelled&&!t.ran&&t.due<=now)){t.ran=true;t.fn();}},state(){return {output:this.el(s.output).textContent,label:this.el(s.copy).textContent,aria:this.el(s.copy).getAttribute('aria-label')};}};
+  const timers=[],requests=[],assertions=[],tracks=[],persist={cleared:[],saved:[]},events={};let now=0,seq=0;
+  const h={s,L,document,ids,timers,requests,assertions,tracks,persist,query:sel=>query(sel,wrap),all:sel=>queryAll(sel,wrap),unhandled:[],syncErrors:[],el:id=>{if(!ids.has(id))throw new Error('Missing actual element '+id);return ids.get(id);},input(id,value,type='input'){const e=this.el(id);e.value=String(value);e.dispatch(type);},click(id=s.copy){try{this.el(id).click();}catch(e){this.syncErrors.push(String(e));}},key(key='l',focus=s.input,meta=false){document.activeElement=focus==='outside'?{}:this.el(focus);document.dispatch('keydown',{key,ctrlKey:!meta,metaKey:meta,preventDefault(){},stopPropagation(){}});},advance(ms){now+=ms;for(const t of timers.filter(t=>!t.cancelled&&!t.ran&&t.due<=now)){t.ran=true;t.fn();}},state(){return {output:this.el(s.output).textContent,label:this.el(s.copy).textContent,aria:this.el(s.copy).getAttribute('aria-label')};}};
   active=h;
-  const globals={document,isSecureContext:true,navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{clear:slug=>persist.cleared.push(slug)},trackTool(){}};
+  const globals={document,isSecureContext:true,navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{clear:slug=>persist.cleared.push(slug)},trackTool(...args){tracks.push(args);}};
   globals.window=globals;const ctx=vm.createContext(globals);const shared='var _slug='+JSON.stringify(s.slug)+';\n'+shortcuts;if(shellFirst)vm.runInContext(shared,ctx);for(const m of source.matchAll(/<script is:inline>([\s\S]*?)<\/script>/g))vm.runInContext(m[1],ctx);if(!shellFirst)vm.runInContext(shared,ctx);h.page={run:code=>vm.runInContext(code,ctx)};h.wrap=wrap;
   return h;
 }
 
   function change(h) {
     h.input('cgg-angle', 180);
+  }
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const p = open(spec, lang), event = ['css-gradient-generator', 'generate'];
+    check(lang + ' GA boot preview sends nothing', [p.el('cgg-code').textContent.length > 0, p.tracks], [true, []]);
+    p.input('cgg-angle', 180);
+    check(lang + ' GA typing keeps live preview without event', [p.el('cgg-code').textContent.includes('180deg'), p.tracks], [true, []]);
+    p.el('cgg-angle').dispatch('change');
+    check(lang + ' GA successful number commit sends once', p.tracks, [event]);
+    p.input('cgg-angle', 361); p.el('cgg-angle').dispatch('change');
+    check(lang + ' GA invalid number commit sends nothing', p.tracks, [event]);
+    p.query('.cgg-dir-btn[data-deg="0"]').click();
+    check(lang + ' GA direction action recovers and sends once', p.tracks, [event, event]);
+    p.input('cgg-angle-range', 90); p.input('cgg-angle-range', 180);
+    check(lang + ' GA slider drag sends nothing', p.tracks.length, 2);
+    p.el('cgg-angle-range').dispatch('change');
+    check(lang + ' GA slider release sends once', p.tracks.length, 3);
+    const hex = p.query('.cgg-stop-hex');
+    hex.value = '#oops'; hex.dispatch('input'); hex.dispatch('change');
+    p.query('.cgg-tab[data-type="radial"]').click();
+    check(lang + ' GA invalid hex and stale picker result send nothing', p.tracks.length, 3);
+    hex.value = '＃１Ａ７３Ｅ８'; hex.dispatch('input'); hex.dispatch('change');
+    check(lang + ' GA valid full-width hex commit sends once', p.tracks.length, 4);
+    p.input('cgg-radial-shape', 'ellipse', 'change');
+    check(lang + ' GA successful select sends once', p.tracks.length, 5);
+    p.click('cgg-add-stop');
+    check(lang + ' GA explicit add sends once', p.tracks.length, 6);
+    const stop = p.all('.cgg-stop').at(-1), pos = stop.querySelector('.cgg-stop-pos');
+    pos.value = '101'; pos.dispatch('input'); pos.dispatch('change');
+    check(lang + ' GA invalid stop commit sends nothing', p.tracks.length, 6);
+    stop.querySelector('.cgg-stop-remove').click();
+    check(lang + ' GA explicit remove sends once after recovery', p.tracks.length, 7);
+    p.query('.cgg-tab[data-type="conic"]').click();
+    check(lang + ' GA successful tab sends once', p.tracks.length, 8);
+    p.key(); p.advance(2000);
+    check(lang + ' GA clearing sends nothing', p.tracks.length, 8);
   }
   const failedLabels = {en:'Copy failed',zh:'复制失败',ja:'コピーに失敗しました',ko:'복사 실패'};
   for (const lang of ['en','zh','ja','ko']) {
@@ -145,6 +181,40 @@ function open(s,lang='en',shellFirst=false){
     // Even partial text input invalidates old feedback while preserving ordinary parse behavior.
     {h=open(spec,lang);h.click(); const text=h.query('.cgg-stop-hex');text.value='#';text.dispatch('input');const before=h.state();h.requests[0].resolve();await settle();check(lang+' partial input invalidates copy',h.state(),before);}
   }
+    const rangeErrors = { en: 'Enter whole angles from 0 to 360 and stop positions from 0 to 100.', zh: '角度须为 0–360 的整数，色标位置须为 0–100 的整数。', ja: '角度は 0～360、カラーストップの位置は 0～100 の整数で入力してください。', ko: '각도는 0~360, 색상 지점 위치는 0~100의 정수로 입력하세요.' };
+    for (const lang of ['en', 'zh', 'ja', 'ko']) {
+      for (const control of ['angle', 'conic', 'stop']) {
+        const p = open(spec, lang);
+        if (control === 'conic') p.query('.cgg-tab[data-type="conic"]').click();
+        const field = control === 'stop' ? p.query('.cgg-stop-pos') : p.el(control === 'angle' ? 'cgg-angle' : 'cgg-conic-from');
+        p.click(); const old = p.requests[0];
+        for (const value of ['', '-1', control === 'stop' ? '101' : '361', '1.5', '2oops', '1e309', '0x10']) {
+          field.value = value; field.dispatch('input');
+          check(lang + '/' + control + '/' + value + ' rejects invalid bounds', [p.el('cgg-code').textContent, p.el('cgg-copy').disabled, p.el('cgg-preview').hidden, p.el('cgg-preview').style.background, p.el('cgg-status').textContent, field.value], ['', true, true, '', rangeErrors[lang], value]);
+          const count = p.requests.length; p.click();
+          check(lang + ' invalid gradient cannot copy stale CSS', p.requests.length, count);
+        }
+        old.resolve(); await settle();
+        check(lang + ' invalid gradient ignores old copy feedback', p.el('cgg-status').textContent, rangeErrors[lang]);
+        for (const value of ['0', control === 'stop' ? '100' : '360', '1e2']) {
+          field.value = value; field.dispatch('input');
+          check(lang + ' valid gradient recovers ' + value, [p.el('cgg-copy').disabled, p.el('cgg-preview').hidden, p.el('cgg-status').textContent], [false, false, '']);
+          check(lang + ' exponent is passed to native generator as a number', p.el('cgg-code').textContent.includes(control === 'stop' ? ' ' + Number(value) + '%' : (control === 'conic' ? 'from ' : '(') + Number(value) + 'deg'), true);
+        }
+      }
+      const p = open(spec, lang);
+      p.input('cgg-angle', '-1');
+      p.query('.cgg-tab[data-type="radial"]').click();
+      check(lang + ' hidden invalid angle does not block radial generation', p.el('cgg-copy').disabled, false);
+      p.query('.cgg-tab[data-type="linear"]').click();
+      check(lang + ' returning to invalid angle clears the radial result', p.el('cgg-copy').disabled, true);
+      p.el('cgg-angle-range').value = '0'; p.el('cgg-angle-range').dispatch('input');
+      check(lang + ' slider fixes number field and output', [p.el('cgg-angle').value, p.el('cgg-copy').disabled, p.el('cgg-code').textContent.includes('linear-gradient(0deg,')], ['0', false, true]);
+      const positions = p.all('.cgg-stop-pos');
+      positions[0].value = '1e2'; positions[0].dispatch('input');
+      positions[1].value = '50'; positions[1].dispatch('input'); positions[1].dispatch('change');
+      check(lang + ' numeric stop order respects valid exponent input', p.all('.cgg-stop-pos').map(el => el.value), ['50', '1e2']);
+    }
     const h=open(spec);h.query('.cgg-dir-btn[data-deg="0"]').click();check('real zero-angle path',h.el('cgg-preview').style.background.startsWith('linear-gradient(0deg,'),true);
     h.query('.cgg-tab[data-type="radial"]').click();check('real radial path',h.el('cgg-preview').style.background.startsWith('radial-gradient('),true);h.query('.cgg-tab[data-type="conic"]').click();check('real conic zero path',h.el('cgg-preview').style.background.startsWith('conic-gradient(from 0deg'),true);
     // Full-width input from a CJK IME is read through NFKC, as in the color palette generator.

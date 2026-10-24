@@ -231,6 +231,26 @@ function open(s,lang='en',order='component-first'){
 
 function assertEq(name,actual,expected){check(name,JSON.stringify(actual)===JSON.stringify(expected),JSON.stringify({actual,expected}));}
 function changePage(h){h.input(spec.input,spec.slug==='css-variables-generator'?'brand':'24px');}
+const rangeErrors = { en: 'Enter whole column and row counts from 1–12 and 1–8 respectively.', zh: '列数须为 1–12 的整数，行数须为 1–8 的整数。', ja: '列数は 1～12、行数は 1～8 の整数で入力してください。', ko: '열 수는 1~12, 행 수는 1~8의 정수로 입력하세요.' };
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  for (const [field, max] of [['cgg-cols', 12], ['cgg-rows', 8]]) {
+    const h = open(spec, lang);
+    h.click();
+    const oldCopy = h.requests[0];
+    for (const value of ['', '0', '-1', String(max + 1), '1.5', '1e309', '2oops', '0x2']) {
+      h.input(field, value);
+      assertEq(lang + '/' + field + '/' + value + ' rejects invalid count', [h.el(spec.output).textContent, h.el(spec.copy).disabled, h.el(spec.preview).children.length, h.el(spec.preview).hidden, h.el(spec.preview).style.display, h.el(spec.status).textContent, h.el(field).value], ['', true, 0, true, '', rangeErrors[lang], value]);
+      const before = h.requests.length; h.click();
+      assertEq(lang + ' invalid count cannot copy stale CSS', h.requests.length, before);
+    }
+    oldCopy.resolve(); await settle();
+    assertEq(lang + ' invalid count ignores earlier copy feedback', h.el(spec.status).textContent, rangeErrors[lang]);
+    for (const value of ['1', String(max), '2e0']) {
+      h.input(field, value);
+      assertEq(lang + ' valid count recovers ' + value, [h.el(spec.copy).disabled, h.el(spec.preview).hidden, h.el(spec.status).textContent], [false, false, '']);
+    }
+  }
+}
 for(const lang of ['en','zh','ja','ko'])for(const order of ['component-first','shared-first']){
   const name=lang+' '+order+' ';let h=open(spec,lang,order);
 
@@ -239,7 +259,7 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['component-first','s
   h.input('cgg-tmpl-rows','auto 1fr');h.input('cgg-col-gap','0');assertEq(name+'manual rows survive gap edit',h.el('cgg-preview').style.gridTemplateRows,'auto 1fr');
   h.input('cgg-cols',4);assertEq(name+'Columns deliberately replace manual column template',h.el('cgg-tmpl-cols').value,'repeat(4, 1fr)');assertEq(name+'Columns keep manual row template',h.el('cgg-tmpl-rows').value,'auto 1fr');
   h.input('cgg-rows',3);assertEq(name+'Rows deliberately replace manual row template',h.el('cgg-tmpl-rows').value,'repeat(3, 1fr)');
-  h.input('cgg-cols',99);h.input('cgg-rows',99);assertEq(name+'counts clamp to12x8',h.el('cgg-preview').children.length,96);h.input('cgg-cols',1);h.input('cgg-rows',1);assertEq(name+'counts can reduce to1x1',h.el('cgg-preview').children.length,1);
+  h.input('cgg-cols',99);h.input('cgg-rows',99);assertEq(name+'invalid counts clear the preview',h.el('cgg-preview').children.length,0);h.input('cgg-cols',1);h.input('cgg-rows',1);assertEq(name+'counts can reduce to1x1',h.el('cgg-preview').children.length,1);
 
   changePage(h);const original=h.state();
   h.key('Enter');assertEq(name+'CtrlEnter keeps the independent Copy path',h.state(),original);
@@ -305,7 +325,7 @@ active=null;process.removeListener('unhandledRejection',unhandled);
   const hashes={"en": "db3a72f37e0fcefbbf3de32bd9105bb06e6090a98e59f9e3f42efa81acf2a128", "zh": "cf11ec23e811c505f491f70a5ef8321dc5638b5220b4d665af3f68f78e16a765", "ja": "5193fca37fecb3abb25e87d7e51d11397ac9debf59f091cd4bed5ab48b19da2c", "ko": "111dac126e9c7490d84e66cf78894c42e85ad135d325176b6c22acf5bd47c9d8"},reference={"en": {"steps": 5, "maxStepChars": 245, "totalStepChars": 619}, "zh": {"steps": 5, "maxStepChars": 95, "totalStepChars": 211}, "ja": {"steps": 5, "maxStepChars": 125, "totalStepChars": 296}, "ko": {"steps": 5, "maxStepChars": 133, "totalStepChars": 317}};
   const digest=text=>createHash('sha256').update(text).digest('hex');
   for(const lang of ['en','zh','ja','ko']){
-    const h=open(spec,lang);const old=Object.fromEntries(Object.entries(h.L).filter(([key])=>!['editor','removeLabel','options','empty','tips'].includes(key)).sort(([a],[b])=>a.localeCompare(b)));
+    const h=open(spec,lang);const old=Object.fromEntries(Object.entries(h.L).filter(([key])=>!['invalidRange','editor','removeLabel','options','empty','tips'].includes(key)).sort(([a],[b])=>a.localeCompare(b)));
     assertEq(lang+' old localized values stay exact',digest(JSON.stringify(old)),hashes[lang]);
     const mdx=readFileSync(join(root,'src/content/tools/css-grid-generator/'+lang+'.mdx'),'utf8'),fm=mdx.match(/^---\n([\s\S]*?)\n---/),front=fm[1];
     const section=front.slice(front.indexOf('\nsteps:\n'),front.indexOf('\nfaqItems:'));
