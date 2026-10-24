@@ -1102,7 +1102,7 @@ const ROWS: Array<{ field: string; editable: boolean }> = [
     var current = null;
     var editMessage = null;
     var suggestion = null;
-    var trackTimer = null;
+    var lastTrackedResult;
 
     function fmt(s, vars) {
       return String(s).replace(/\{(\w+)\}/g, function (m, k) { return vars && vars[k] !== undefined ? vars[k] : m; });
@@ -1175,7 +1175,7 @@ const ROWS: Array<{ field: string; editable: boolean }> = [
         if (n.code === 'schemeLooksLikeHost') {
           var b = el('button', 'btn-ghost btn-sm up-note-btn', fmt(S.parseAs, { url: n.data.suggestion }));
           b.type = 'button';
-          b.addEventListener('click', function () { inputEl.value = n.data.suggestion; render(); });
+          b.addEventListener('click', function () { inputEl.value = n.data.suggestion; render(true); });
           li.appendChild(b);
         }
         notesEl.appendChild(li);
@@ -1207,7 +1207,7 @@ const ROWS: Array<{ field: string; editable: boolean }> = [
       var q = serializeQuery(pairs);
       var r = setComponent(current.fields.href, 'search', q ? '?' + q : '');
       inputEl.value = r.href;
-      render();
+      render(true);
     }
 
     function paramRow(p, index, isNew) {
@@ -1333,7 +1333,7 @@ const ROWS: Array<{ field: string; editable: boolean }> = [
       });
     }
 
-    function render() {
+    function render(track) {
       var res = analyze(inputEl.value, baseEl.value);
       current = res;
       suggestion = null;
@@ -1364,8 +1364,10 @@ const ROWS: Array<{ field: string; editable: boolean }> = [
       renderSegments(res);
       renderRfc(res);
       resultsEl.hidden = false;
-      clearTimeout(trackTimer);
-      trackTimer = setTimeout(function () { window.trackTool && window.trackTool('url-parser', 'parse'); }, 1500);
+      if (track === true && !hostProblem && res.fields.href !== lastTrackedResult) {
+        lastTrackedResult = res.fields.href;
+        window.trackTool && window.trackTool('url-parser', 'parse');
+      }
     }
 
     function applyField(field, value) {
@@ -1375,11 +1377,13 @@ const ROWS: Array<{ field: string; editable: boolean }> = [
       if (r.status === 'ignored') editMessage = fmt(S.editIgnored, { field: S.fields[field], value: value });
       else if (r.status === 'adjusted') editMessage = fmt(S.editAdjusted, { field: S.fields[field], value: value, actual: r.actual });
       inputEl.value = r.href;
-      render();
+      render(true);
     }
 
     inputEl.addEventListener('input', function () { addingParam = false; render(); });
     baseEl.addEventListener('input', render);
+    inputEl.addEventListener('change', function () { render(true); });
+    baseEl.addEventListener('change', function () { render(true); });
     document.querySelectorAll('#up-wrap .up-value').forEach(function (inp) {
       if (inp.readOnly) return;
       inp.addEventListener('change', function () { applyField(inp.getAttribute('data-field'), inp.value); });
@@ -1414,12 +1418,12 @@ const ROWS: Array<{ field: string; editable: boolean }> = [
     suggestBtn.addEventListener('click', function () {
       if (!suggestion) return;
       inputEl.value = suggestion;
-      render();
+      render(true);
     });
     $('up-example').addEventListener('click', function () {
       inputEl.value = S.exampleUrl;
       baseEl.value = '';
-      render();
+      render(true);
     });
     $('up-clear').addEventListener('click', function () {
       inputEl.value = '';

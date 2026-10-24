@@ -406,11 +406,18 @@ const { tips: TIPS, ...CLIENT_T } = T;
             b.setAttribute('aria-pressed', on ? 'true' : 'false');
           });
           currentSep = btn.getAttribute('data-sep');
-          if (textEl.value) doTextToBinary();
+          if (textEl.value) doTextToBinary(true);
         });
       });
 
-      function doTextToBinary() {
+      var lastTrackedResults = Object.create(null);
+      function trackResult(action, result) {
+        if (lastTrackedResults[action] === result) return;
+        lastTrackedResults[action] = result;
+        window.trackTool && window.trackTool('text_to_binary', action);
+      }
+
+      function doTextToBinary(track) {
         var text = textEl.value;
         if (!text) { binEl.value = ''; setStatus('', ''); return; }
         var r = encodeText(text, currentSep);
@@ -419,7 +426,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
         var msg = fill(r.codePoints === r.characters ? t.encoded : t.encodedCp, fields);
         if (r.replaced) msg += ' ' + fill(t.noteSurrogate, { n: r.replaced });
         setStatus(msg, r.replaced ? 'info' : 'success');
-        window.trackTool && window.trackTool('text_to_binary', 'text_to_binary');
+        if (track === true) trackResult('text_to_binary', binEl.value);
       }
 
       function doBinaryToText() {
@@ -438,7 +445,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
         if (r.padded) notes.push(fill(t.notePadded, { n: r.padded }));
         if (r.controls) notes.push(fill(t.noteControl, { n: r.controls, cp: hex4(r.firstControl) }));
         setStatus(notes.length ? msg + ' ' + notes.join(' ') : msg, notes.length ? 'info' : 'success');
-        window.trackTool && window.trackTool('text_to_binary', 'binary_to_text');
+        trackResult('binary_to_text', textEl.value);
       }
 
       var textTimer = null;
@@ -446,6 +453,8 @@ const { tips: TIPS, ...CLIENT_T } = T;
         clearTimeout(textTimer);
         textTimer = setTimeout(doTextToBinary, 150);
       });
+
+      textEl.addEventListener('change', function () { doTextToBinary(true); });
 
       document.getElementById('tb-to-text').addEventListener('click', doBinaryToText);
       binEl.addEventListener('keydown', function (e) {
