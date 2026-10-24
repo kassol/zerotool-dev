@@ -4,6 +4,9 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fromMarkdown } from 'mdast-util-from-markdown';
+import { gfm } from 'micromark-extension-gfm';
+import { gfmFromMarkdown } from 'mdast-util-gfm';
 import {
   FAQ_COUNT_MISMATCH, FAQ_ID, FAQ_IDS_TODO, LANGS, LIMITS_EXEMPT, S2_PENDING, STEPS_COUNT_MISMATCH,
   annotations, bodySize, contractProblems, examplePairs, fencedBlocks, headings, isLimitsHeading, isUsageHeading, proseText, splitToolMdx, toolMdxContract,
@@ -72,6 +75,21 @@ check('annotations: after stops at the next H2', ann[1].after.includes('plain') 
 equal('annotations: no JSON gives a null spec', ann[1].spec, null);
 equal('annotations: bad JSON gives an undefined spec', ann[2].spec, undefined);
 equal('annotations: other tags are ignored', annotations('{/* other: {} */}', 'demo-check').length, 0);
+
+const fencedHeadingExample = [
+  '{/* demo-check */}',
+  '```md',
+  '## This is input, not the next section',
+  '```',
+  '```text',
+  'verified output',
+  '```',
+  '## Next section',
+  'unrelated output',
+].join('\n');
+equal('annotations: a fenced H2 keeps both worked-example blocks in after',
+  fencedBlocks(annotations(fencedHeadingExample, 'demo-check')[0].after).map((b) => b.text),
+  ['## This is input, not the next section', 'verified output']);
 
 const fenceBody = 'Text\n```json\n{"a":1}\n```\n\n```ts\nconst a = 1;\n```\n~~~text\nplain\n~~~\n```json\n{}\n```\n```ts\nx\n```\n';
 equal('fencedBlocks: languages and text', fencedBlocks(fenceBody), [{ lang: 'json', text: '{"a":1}' }, { lang: 'ts', text: 'const a = 1;' }, { lang: 'text', text: 'plain' }, { lang: 'json', text: '{}' }, { lang: 'ts', text: 'x' }]);
@@ -161,6 +179,65 @@ try {
   writeTool('usagecode', { en: { extra: '\n```md\n## Usage\n```\n' } });
   check('contract: Usage inside a code block passes', run('usagecode').ok);
 
+  writeTool('broken-table', { en: { extra: '\n| Name | Value |\n| --- | --- |\n\n| a | 1 |\n' } });
+  check('contract: a blank line between the table delimiter and its first row fails',
+    failed(run('broken-table'), /en GFM tables have no internal blank lines.*delimiter.*row/));
+
+  const table = '| Name | Value |\n| --- | --- |\n| a | 1 |\n| b | 2 |';
+  const renderedRows = (text) => fromMarkdown(text, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] })
+    .children.filter((n) => n.type === 'table').map((n) => n.children.length);
+  equal('GFM: the uninterrupted table renders all three rows', renderedRows(table), [3]);
+  equal('GFM: a blank after the delimiter drops both data rows',
+    renderedRows(table.replace('| a |', '\n| a |')), [1]);
+  equal('GFM: a blank between data rows drops the last row',
+    renderedRows(table.replace('| b |', '\n| b |')), [2]);
+
+  const brokenTables = [
+    ['header and delimiter', table.replace('| --- |', '\n| --- |'), /header and delimiter/],
+    ['data rows', table.replace('| b |', '\n\n| b |'), /between table rows/],
+    ['spaces-only gap', table.replace('| a |', ' \t \n| a |'), /delimiter and first row/],
+    ['alignment delimiter', '| Name | Value |\n\n| :-- | --: |\n| a | 1 |', /header and delimiter/],
+    ['optional outer pipes', 'Name | Value\n--- | ---\na | 1\n\nb | 2', /between table rows/],
+    ['mixed outer pipes', 'Name | Value\n| --- | --- |\n\n| a | 1 |', /delimiter and first row/],
+    ['single-column header', 'Name\n\n| --- |\n| a |', /header and delimiter/],
+    ['single-column data', '| Name |\n| --- |\n\n| a |', /delimiter and first row/],
+    ['escaped cell pipe', '| Name | Value |\n| --- | --- |\n| a\\|b | 1 |\n\n| c | 2 |', /between table rows/],
+    ['inline code cells', '| `Name` | Value |\n| --- | --- |\n\n| `a` | 1 |', /delimiter and first row/],
+    ['fence does not hide following table', '````md\n```\n<pre>\n## input\n`````\n\n' + table.replace('| a |', '\n| a |'), /delimiter and first row/],
+    ['pre does not hide following table', '<pre><code>{`\n~~~\n## input\n`}</code></pre>\n\n' + table.replace('| a |', '\n| a |'), /delimiter and first row/],
+  ];
+  for (const [i, [name, extra, message]] of brokenTables.entries()) {
+    writeTool('table-gap-' + i, { zh: { extra } });
+    const c = run('table-gap-' + i);
+    check(`contract: ${name} breaks the intended table`,
+      failed(c, /zh GFM tables have no internal blank lines/) && c.problems.some((p) => message.test(p)),
+      c.problems.join('; '));
+    check(`contract: ${name} reports a body line`, c.problems.some((p) => /body line \d+:/.test(p)));
+  }
+  const validTables = [
+    ['blank lines around a table', '\n\n' + table + '\n\nA new paragraph.\n'],
+    ['separate complete tables', table + '\n\n' + table],
+    ['separate header-only tables', '| Name | Value |\n| --- | --- |\n\n| Other | Value |\n| --- | --- |'],
+    ['prose with a pipe after a framed table', table + '\n\nChoose left | right in the text.\n'],
+    ['different-width pipe prose', table + '\n\n| A standalone label |\n'],
+    ['a heading between table-shaped blocks', table + '\n\n## Next table\n\n| a | 1 |'],
+    ['code between table-shaped blocks', table + '\n\n```text\ncode\n```\n\n| a | 1 |'],
+    ['escaped pipes are prose', 'Name \\| Value\n\n--- \\| ---\n\none \\| two'],
+    ['inline table text is code', '`| Name | Value |`\n\n`| --- | --- |`\n\n`| a | 1 |`'],
+    ['mismatched delimiter is not a table', '| Name | Value |\n\n| --- | --- | --- |'],
+    ['fenced table examples', '```md\n' + table.replace('| a |', '\n| a |') + '\n```'],
+    ['long fence around table examples', '````md\n```\n' + table.replace('| a |', '\n| a |') + '\n~~~~\n`````'],
+    ['preformatted table examples', '<pre><code>{`\n' + table.replace('| a |', '\n| a |') + '\n`}</code></pre>'],
+    ['commented table', '<!--\n' + table.replace('| a |', '\n| a |') + '\n-->'],
+    ['MDX annotation after an unframed table', 'Name | Value\n--- | ---\na | 1\n\n{/* check: left | right */}'],
+    ['table inside an MDX comment', '{/*\n' + table.replace('| a |', '\n| a |') + '\n*/}'],
+  ];
+  for (const [i, [name, extra]] of validTables.entries()) {
+    writeTool('valid-table-' + i, { all: { extra } });
+    const c = run('valid-table-' + i);
+    check(`contract: ${name} permits legitimate blanks`, c.ok, c.problems.join('; '));
+  }
+
   writeTool('nolimits', { ja: { h2: ['Examples'] } });
   check('contract: missing Limits fails', failed(run('nolimits'), /ja has a Limits section: Examples/));
   check('contract: limits:false skips Limits', run('nolimits', { limits: false }).ok);
@@ -187,6 +264,36 @@ try {
   check('contract: annotation that does not match fails', failed(ex, /ko up-check #1 matches the engine: expected B/));
   check('contract: annotation minimum per language', failed(run('good', { annotations: [{ tag: 'up-check', min: 1, verify }] }), /en has at least 1 up-check examples: 0/));
   check('contract: verify errors become problems', failed(run('ex', { annotations: [{ tag: 'up-check', verify: () => { throw new Error('boom'); } }] }), /boom/));
+
+  const boundaryCases = [
+    ['long backtick fence', '````md\n```\n## input\n~~~\n<h2>input</h2>\n`````'],
+    ['long tilde fence', '~~~~md\n~~~\n## input\n```\n<h2>input</h2>\n~~~~~'],
+    ['fence closing with text is still input', '```md\n``` not a closing fence\n## input\n```'],
+    ['pre containing a fence', '<pre><code>{`\n~~~\n## input\n<h2>input</h2>\n`}</code></pre>'],
+    ['nested pre blocks', '<pre>\n<pre>\n## inner input\n</pre>\n## outer input\n</pre>'],
+    ['inline pre opener', '`<pre>`\nverified input'],
+    ['self-closing pre', '<pre />\nverified input'],
+    ['fence containing an unclosed pre', '```html\n<pre>\n## input\n```'],
+    ['inline heading text', '`<h2>input</h2>`\n##not-a-heading\n### Nested heading\n<h2-demo>input</h2-demo>'],
+    ['annotation inside code', '```md\n{/* boundary-check */}\n## input\n```'],
+    ['heading inside an HTML comment', '<!--\n## input\n<h2>input</h2>\n-->'],
+    ['indented code', '\n    ## input\n    <h2>input</h2>'],
+    ['quoted code', '> ```md\n> ## input\n> ```'],
+  ];
+  for (const [i, [name, input]] of boundaryCases.entries()) {
+    const expected = `\n${input}\n\nverified output\n`;
+    writeTool('boundary-' + i, { all: { extra: `{/* boundary-check */}${expected}   ## Next section\nunrelated output\n` } });
+    const c = run('boundary-' + i, { annotations: [{ tag: 'boundary-check', min: 1, verify({ after }) {
+      return after === expected ? null : JSON.stringify(after);
+    } }] });
+    check(`contract: ${name} stays inside its annotated example`, c.ok, c.problems.join('; '));
+    equal(`contract: ${name} has only the real annotation`,
+      c.results.filter((r) => /boundary-check #/.test(r.rule)).length, 4);
+  }
+  writeTool('html-boundary', { all: { extra: '{/* boundary-check */}\nkept\n<H2 class="next">Next</H2>\nnot kept\n' } });
+  check('contract: an actual HTML H2 ends the example', run('html-boundary', { annotations: [{
+    tag: 'boundary-check', min: 1, verify: ({ after }) => after === '\nkept\n' ? null : after,
+  }] }).ok);
 } finally {
   rmSync(root, { recursive: true, force: true });
 }
