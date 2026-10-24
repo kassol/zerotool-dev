@@ -130,13 +130,50 @@ const getLangHref = (targetLang: string) => {
       updatedDate={updatedDate}
     />
 
-    {/* AdSense Auto Ads — main thread: adsbygoogle.js needs direct DOM access, unsupported in a Partytown worker */}
+    {/* AdSense needs the main thread. Tool ads are below the tool: give the
+        content a paint before loading the vendor. Articles have a top slot. */}
     {adsenseId && !sensitive && (
-      <script
-        async
-        src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${adsenseId}`}
-        crossorigin="anonymous"
-      ></script>
+      isBlogPost ? (
+        <script
+          async
+          src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${adsenseId}`}
+          crossorigin="anonymous"
+        ></script>
+      ) : (
+        <script is:inline id="zt-adsense-bootstrap" define:vars={{ adsenseId }}>
+          (function () {
+            function load() {
+              if (document.getElementById('zt-adsense-script')) return;
+              if (document.visibilityState === 'hidden') { schedule(); return; }
+              var script = document.createElement('script');
+              script.id = 'zt-adsense-script';
+              script.async = true;
+              script.src = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=' + adsenseId;
+              script.crossOrigin = 'anonymous';
+              document.head.appendChild(script);
+            }
+            function visible() {
+              if (document.visibilityState === 'hidden') return;
+              document.removeEventListener('visibilitychange', visible);
+              schedule();
+            }
+            function schedule() {
+              if (document.visibilityState === 'hidden') {
+                document.addEventListener('visibilitychange', visible);
+                return;
+              }
+              window.requestAnimationFrame(function () {
+                window.requestAnimationFrame(function () {
+                  if (window.requestIdleCallback) window.requestIdleCallback(load, { timeout: 1000 });
+                  else window.setTimeout(load, 0);
+                });
+              });
+            }
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', schedule, { once: true });
+            else schedule();
+          })();
+        </script>
+      )
     )}
 
     {/* GA4 via Partytown — non-blocking */}

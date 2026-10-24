@@ -145,6 +145,8 @@ node scripts/test-llms-txt.mjs   # 检查构建出的 dist/llms*.txt（先 build
 
 ## 自动化质量门
 
+AdSense 加载时机：非文章页在 DOM 就绪、正文获得绘制机会后的空闲时追加广告脚本，避免其争用工具首屏；博客文章保留上方广告的原加载时机。修改 `BaseLayout.astro` 的广告引导时运行 `scripts/test-adsense-loading.mjs`；方案与远程测量记录见 `docs/2026-10-24-work-grade-fixes.md`。
+
 | 检查 | 触发 | 阻塞条件 |
 |------|------|----------|
 | `scripts/check-icon-coverage.mjs` | `npm run build` 第 1 步 | 任何 slug 缺图标 |

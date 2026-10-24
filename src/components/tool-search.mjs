@@ -26,6 +26,13 @@ const GENERIC = [
 ];
 const GENERIC_CJK = GENERIC.filter((w) => !/^[a-z]+$/.test(w)).sort((a, b) => b.length - a.length);
 
+// Deliberate task aliases, scoped to a tool rather than fuzzy query rewriting.
+// These Korean spellings mean formatting; other tools mentioning JSON do not
+// acquire a match. They use the same score as an alternate-language name.
+const TASK_ALIASES = {
+  'json-formatter': ['포맷', '포맷팅', '포매팅'],
+};
+
 // Hangul Jamo, CJK punctuation-free ranges: Hiragana/Katakana, Hangul compatibility Jamo,
 // CJK Unified Ideographs (+ Ext A), Hangul syllables, CJK compatibility ideographs.
 const CJK_CHAR = /[\u1100-\u11ff\u3040-\u30ff\u3130-\u318f\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]/;
@@ -64,7 +71,7 @@ export function makeEntry(tool) {
     slug: normalizeSearchText(tool.slug),
     name: normalizeSearchText(tool.name).trim(),
     desc: normalizeSearchText(tool.description),
-    alt: (tool.altNames || []).map(normalizeSearchText).join('\n'),
+    alt: [...(tool.altNames || []), ...(TASK_ALIASES[tool.slug] || [])].map(normalizeSearchText).join('\n'),
   };
 }
 

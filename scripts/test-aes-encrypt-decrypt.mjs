@@ -541,8 +541,8 @@ if (need('encryptFile') && need('decryptFile')) {
     const t1 = Buffer.from(await E.encryptText({ type: 'raw', key }, 'x'), 'base64');
     check('text, raw key, no IV: 12 + n + 16 bytes, so there is no 16-byte salt to mention', t1.length === 12 + 1 + 16, t1.length);
   }
-  check('text success message: entered IV, raw key without IV, or password; the IV warning follows only with an entered IV',
-    script.includes("setStatus(fmt(spec.iv ? S.encryptedIv : spec.type === 'raw' ? S.encryptedRaw : S.encrypted, { n: num(new TextEncoder().encode(plainEl.value).length) }) + (spec.iv ? ' ' + S.ivWarning : ''), spec.iv ? 'info' : 'success');"));
+  // Text status for all key/IV modes is checked by running the complete page in
+  // test-aes-async-ui.mjs, including its captured input byte count.
   check('file success message: the same IV warning when a file is encrypted with an entered IV',
     script.includes("var ivFile = kind === 'encrypt' && spec.iv;") && script.includes("setStatus(fmt(S.fileReady, { name: name, size: size(out.length) }) + (ivFile ? ' ' + S.ivWarning : ''), ivFile ? 'info' : 'success');"));
   const i18nRef = (l) => JSON.parse(readFileSync(join(root, 'src/i18n/' + l + '.json'), 'utf8'))['tool.reference'];
@@ -564,9 +564,8 @@ if (need('encryptFile') && need('decryptFile')) {
     /bytes\.length !== 16 && bytes\.length !== 24 && bytes\.length !== 32/.test(block) && /\^\[0-9a-fA-F\]\{24\}\$/.test(block) &&
     ['en', 'zh', 'ja', 'ko'].every((l) => S[l].tips.key.includes('600,000') && S[l].tips.key.includes('16') && S[l].tips.key.includes('v2:') && S[l].tips.cipher.includes('200,000') && S[l].tips.cipher.includes('600,000') &&
       /256 ?MB/.test(S[l].tips.plain) && /256 ?MB/.test(S[l].tips.cipher) && S[l].tips.plain.includes('.enc') && S[l].tips.iv.includes('24') && S[l].tips.iv.includes('12')));
-  check('Ctrl/Cmd+L clears the password, IV, AAD, both files, the download and the status (ToolLayout clears the text fields)',
-    /key === 'l' \|\| e\.key === 'L'\) && wrap\.contains\(document\.activeElement\)\) \{\s*pwEl\.value = '';\s*ivEl\.value = '';\s*aadEl\.value = '';\s*setFile\(plainFile, null\);\s*setFile\(cipherFile, null\);/.test(script) &&
-    /function setFile\(slot, file\) \{[\s\S]{0,400}clearDownload\(\);\s*setStatus\(''\);\s*\}/.test(script));
+  // Clear (both listener orders, late operations and existing downloads) is
+  // exercised at the real page/ToolLayout seam in test-aes-async-ui.mjs.
   eq('stacks at 860px, phone details at 640px', source.match(/@media \(max-width: \d+px\)/g), ['@media (max-width: 860px)', '@media (max-width: 640px)']);
   check('no script breakpoint is left behind', !/matchMedia/.test(script));
   check('the "?" buttons are not squeezed in flex rows', source.includes('<Toggletip id="aes-tip-key"') && /\.zt-tip\s*\{[^}]*flex:\s*none;/.test(commonStyle));
