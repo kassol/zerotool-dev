@@ -239,7 +239,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const oldCopy = h.requests[0];
     for (const value of ['', '0', '-1', String(max + 1), '1.5', '1e309', '2oops', '0x2']) {
       h.input(field, value);
-      assertEq(lang + '/' + field + '/' + value + ' rejects invalid count', [h.el(spec.output).textContent, h.el(spec.copy).disabled, h.el(spec.preview).children.length, h.el(spec.preview).hidden, h.el(spec.status).textContent, h.el(field).value], ['', true, 0, true, rangeErrors[lang], value]);
+      assertEq(lang + '/' + field + '/' + value + ' rejects invalid count', [h.el(spec.output).textContent, h.el(spec.copy).disabled, h.el(spec.preview).children.length, h.el(spec.preview).hidden, h.el(spec.preview).style.display, h.el(spec.status).textContent, h.el(field).value], ['', true, 0, true, '', rangeErrors[lang], value]);
       const before = h.requests.length; h.click();
       assertEq(lang + ' invalid count cannot copy stale CSS', h.requests.length, before);
     }
