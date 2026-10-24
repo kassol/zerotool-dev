@@ -640,10 +640,33 @@ const { tips: TIPS, ...CLIENT_T } = T;
       }
 
       function problemText(bad) {
+        if (bad.problem === 'unsupportedMethod') return t.unsupportedMethod.replace('{method}', bad.method);
         var request = /^([!#$%&'*+.^_`|~0-9A-Za-z-]+) +\S+ +HTTP\/\d(?:\.\d)?[ \t]*$/.exec(bad.text);
         if (request && bad.problem !== 'methodCase') return t.unsupportedMethod.replace('{method}', request[1]);
         var text = t.problems[bad.problem] || t.problems.noColon;
         return text.replace('{method}', bad.method || '').replace('{upper}', bad.upper || '');
+      }
+
+      function parsePageHeaders(rawText) {
+        var parsed = parseHeaders(rawText);
+        if (!parsed.mainLine) return parsed;
+        var lines = rawText.split(/\r?\n/);
+        var firstLine = lines[parsed.mainLine - 1].replace(/^[<>]( |$)/, '');
+        var request = /^([!#$%&'*+.^_`|~0-9A-Za-z-]+) +\S+ +HTTP\/\d(?:\.\d)?[ \t]*$/.exec(firstLine);
+        if (!request || /^(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD|TRACE|CONNECT)$/i.test(request[1])) return parsed;
+
+        // Keep a nonempty, colon-free placeholder on the same physical line. The protected
+        // parser still controls section boundaries, folding and all subsequent line numbers.
+        var lineNo = parsed.mainLine;
+        lines[lineNo - 1] = request[1];
+        parsed = parseHeaders(lines.join('\n'));
+        parsed.invalid.forEach(function (bad) {
+          if (bad.line !== lineNo) return;
+          bad.text = firstLine + bad.text.slice(request[1].length);
+          bad.problem = 'unsupportedMethod';
+          bad.method = request[1];
+        });
+        return parsed;
       }
 
       function renderCategorized(parsed) {
@@ -780,7 +803,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
           lastParsed = null;
           return;
         }
-        var parsed = parseHeaders(text);
+        var parsed = parsePageHeaders(text);
         if (parsed.statusLine) parsed.statusLine = parsed.statusLine.replace(/[ \t]+$/, '');
         var readNothing = parsed.headers.length === 0 && !parsed.statusLine;
         if (readNothing && !parsed.invalid.length) {
