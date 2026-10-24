@@ -13,9 +13,10 @@ export function networkNoteKey(slug: string): string | null {
   return networkToolSlugs.includes(slug) ? `network.${slug}` : null;
 }
 
-// Tools that use the network only after the user turns on an option. They keep the
-// "Runs in your browser" badge (tool.trustClient). In place of tool.trustPrivacy ("data never
-// leaves your browser") the trust bar shows `trustOptional.{slug}`, which states the condition.
+// Tools whose feature requests require the user to turn on an option. Page analytics,
+// ads and asset loading are separate from these feature requests. They keep the
+// "Runs in your browser" badge (tool.trustClient). In place of tool.trustPrivacy,
+// the trust bar shows `trustOptional.{slug}`, which states the download condition.
 // The text is static: the option lives in the tool component and can be restored from storage,
 // and the sentence is true in both states. The About pages list them with `networkOptional.{slug}`.
 export const optionalNetworkToolSlugs: readonly string[] = [
