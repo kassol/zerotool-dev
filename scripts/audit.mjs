@@ -3,6 +3,7 @@
  * audit.mjs — comprehensive static audit
  *
  * Validates project consistency across tools, content, routes, i18n, and blog.
+ * Reads repository source files; writes only its report to stdout.
  * Designed to run locally and in CI. Exit code:
  *   0 — all checks PASS or WARN
  *   1 — any check FAIL
@@ -16,6 +17,7 @@
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { absoluteRunClaimIssues, toolFaqIssues } from './lib/audit-content.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const ARGS = new Set(process.argv.slice(2));
@@ -290,6 +292,19 @@ function checkContentTools(toolSlugs) {
 
   if (issues.length === 0) pass('content_tools', `content/tools coverage (${dirs.length} dirs × ${LANGS.length} langs)`);
   else fail('content_tools', 'content/tools coverage', issues);
+}
+
+function checkToolFaqCounts(toolSlugs) {
+  const issues = [];
+  for (const slug of toolSlugs) {
+    const pages = Object.fromEntries(LANGS.map((lang) => {
+      const rel = `src/content/tools/${slug}/${lang}.mdx`;
+      return [lang, existsSync(join(ROOT, rel)) ? read(rel) : null];
+    }));
+    issues.push(...toolFaqIssues(slug, pages));
+  }
+  if (issues.length === 0) pass('tool_faq_counts', `valid FAQ items and equal counts (${toolSlugs.size} tools × ${LANGS.length} langs)`);
+  else fail('tool_faq_counts', 'tool FAQ shape and language counts', issues);
 }
 
 function checkCategoryFilterAlignment(declaredCategories, tools) {
@@ -721,25 +736,6 @@ function checkAboutNetworkClaims() {
   else fail('about_network_claims', 'About page claims contradict the network tool list', issues);
 }
 
-// Published text says where a tool runs in concrete words ("Runs in your browser",
-// "在浏览器中处理", "ブラウザ内で処理", "브라우저에서 처리"). Absolute wording such as
-// "100% client-side" was removed on 2026-10-08; this check stops it from coming back
-// through new tool pages, blog posts or descriptions. Draft blog posts are not built
-// and are skipped.
-const ABSOLUTE_RUN_CLAIMS = [
-  /100\s*[%％]\s*-?\s*(client|browser|local|offline|private|in[- ](your )?browser|客户端|浏览器|本地|离线|クライアント|ブラウザ|ローカル|オフライン|클라이언트|브라우저|로컬|오프라인)/i,
-  /\bentirely (in|on) (your|the) browser/i,
-  /\bfully client[- ]side/i,
-  /\bcompletely (private|client[- ]side|local)/i,
-  /纯浏览器/,
-  /完全在浏览器/,
-  /ブラウザ完結/,
-  /完全ブラウザ/,
-  /完全にブラウザ/,
-  /브라우저에서 완결/,
-  /완전히 브라우저/,
-];
-
 function checkNoAbsoluteRunClaims() {
   const issues = [];
   const files = ['src/data/tools.ts', 'src/data/llms.mjs', 'scripts/generate-og.mjs', 'README.md'];
@@ -758,17 +754,10 @@ function checkNoAbsoluteRunClaims() {
   walk('src/layouts', (f) => f.endsWith('.astro'));
   walk('src/components', (f) => f.endsWith('.astro'));
   for (const rel of files) {
-    const text = read(rel);
-    if (rel.startsWith('src/content/blog/') && /^---[\s\S]*?\ndraft:\s*true\b[\s\S]*?\n---/.test(text)) continue;
-    text.split('\n').forEach((line, i) => {
-      for (const re of ABSOLUTE_RUN_CLAIMS) {
-        const m = line.match(re);
-        if (m) issues.push(`${rel}:${i + 1}: "${m[0]}" — state the fact instead (for example "Runs in your browser")`);
-      }
-    });
+    issues.push(...absoluteRunClaimIssues(rel, read(rel)));
   }
-  if (issues.length === 0) pass('no_absolute_run_claims', `no "100% client-side" style wording in published text (${files.length} files)`);
-  else fail('no_absolute_run_claims', 'absolute wording about where tools run', issues);
+  if (issues.length === 0) pass('no_absolute_run_claims', `no absolute processing or data location claims in published text (${files.length} files)`);
+  else fail('no_absolute_run_claims', 'absolute wording about tool processing or data location', issues);
 }
 
 function checkRedirects() {
@@ -819,6 +808,7 @@ try {
   checkIconCoverage(toolSlugs);
   checkRouteRegistration(toolSlugs);
   checkContentTools(toolSlugs);
+  checkToolFaqCounts(toolSlugs);
   checkCategoryFilterAlignment(declaredCategories, tools);
   checkBasePages();
   checkI18nKeys();
