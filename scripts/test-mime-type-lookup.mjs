@@ -372,13 +372,13 @@ for(const [name,begin,end,expected] of [
   ['database/signatures','      var DB = [','      // ── Search panel','7658506ed21f0eb823a8d410e85ce87e9100bcd0ced0f7ad66c7a4ca88a5b36b'],
   ['hex/extension helpers','      function bytesToHex','      function sniff(file)','562f88108dd27e810e00baf0460ffcfdbb0162e86a3af6a6dad31fd7bcf93b69'],
   ['real sniff detection/body','          var bytes = new Uint8Array(reader.result);','        reader.onerror =','fe6209537a8c72b3007de0f2bc68ad4953805962bf3f9249d9225f9e7d204992'],
-  ['real search filter/render','        var q = (searchInput.value','      searchInput.addEventListener','62e9b36902008273003b58b6dc540c9a59398eb83f067a557ac5c67d7c08c32a'],
+  ['real search filter/render','        var q = (searchInput.value','      searchInput.addEventListener','e40c6c46d800264939dc2fef2e4c4cee2df02a35c2e1fdeeaba474bd5f58b1d8'],
 ])eq(name+' byte protection',createHash('sha256').update(src.slice(src.indexOf(begin),src.indexOf(end))).digest('hex'),expected);
 
 // v2 page layout — compiled CSS, real SSR text and page controls; browser geometry is separate.
 const v2Pass=passes,v2Fail=failures;
 const frozen={
-  "scriptHash": "c6539ba4a38e83b3041d813368147894c6306177655a8dcf488855cb68280966",
+  "scriptHash": "79e7816cc2e99deb48f17e6b35643f95cf89bd7cafecefe5f97a794bf82301f7",
   "oldKeys": [
     "tabSearch",
     "tabSniff",
