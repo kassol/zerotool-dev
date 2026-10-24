@@ -21,6 +21,9 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
+import { loadPage } from './astro-page-harness.mjs';
+import { createFormatterRunner } from '../src/components/tools/json-formatter-run.js';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -713,6 +716,66 @@ for (const lang of ['zh', 'ja', 'ko']) {
         && c.result.rows.map((r) => r.seg).join() === 'a,b' && c.result.rows[1].idx === 0 && e.type === 'error' && /Unknown request/.test(e.message));
     } finally { await worker.terminate(); }
   }
+}
+
+// Real page events and the production worker client/runner, with controlled Worker delivery.
+const pageRequire = createRequire(join(root, 'package.json'));
+function outcomePage(lang) {
+  const requests = [], tracks = [];
+  class ControlledWorker {
+    run = createFormatterRunner();
+    postMessage(request) { requests.push({ worker: this, request }); }
+    terminate() { this.terminated = true; }
+  }
+  const page = loadPage('src/components/tools/JsonFormatterTool.astro', {
+    lang, dataset: { 'jf-wrap': { strings: JSON.stringify(STRINGS[lang]) } },
+    preset: { 'jf-input': '{"a":1}' },
+    globals: {
+      Blob, addEventListener() {}, trackTool(...args) { tracks.push(args); },
+      require(name) { return name.endsWith('?worker') ? ControlledWorker : pageRequire(join(root, 'src/components/tools', name)); },
+      ztPersist: { load() { return {}; }, save() {}, clear() {} },
+    },
+  });
+  return { ...page, tracks, requests,
+    async reply(index = requests.length - 1) {
+      const { worker, request } = requests[index];
+      worker.onmessage({ data: { id: request.id, type: 'result', result: worker.run(request) } });
+      await new Promise(setImmediate);
+    },
+  };
+}
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const page = outcomePage(lang);
+  await page.reply();
+  eq(lang + ': restored formatter result is silent', page.tracks, []);
+  page.el('jf-input').value = '{"a":2}'; page.el('jf-input').dispatch('input'); page.flush();
+  await page.reply();
+  eq(lang + ': successful live formatting is silent', page.tracks, []);
+  page.el('jf-format').click();
+  eq(lang + ': pending Format is silent', page.tracks, []);
+  await page.reply();
+  eq(lang + ': successful Format keeps historical event', page.tracks, [['json_formatter', 'format']]);
+  page.el('jf-format').click(); await page.reply();
+  eq(lang + ': unchanged Format result is deduplicated', page.tracks.length, 1);
+  page.el('jf-minify').click(); await page.reply();
+  eq(lang + ': successful Minify keeps historical event', page.tracks.at(-1), ['json_formatter', 'minify']);
+  const before = page.tracks.length;
+  page.el('jf-input').value = '{"a":'; page.el('jf-format').click(); await page.reply();
+  eq(lang + ': invalid JSON has no outcome event', page.tracks.length, before);
+  page.el('jf-input').value = '{"a":3}'; page.el('jf-format').click();
+  const stale = page.requests.length - 1;
+  page.el('jf-input').value = '{"a":4}'; page.el('jf-input').dispatch('input');
+  await page.reply(stale);
+  eq(lang + ': result superseded while typing is silent', page.tracks.length, before);
+  page.el('jf-minify').click(); page.el('jf-clear').click();
+  await page.reply(page.requests.length - 2); await page.reply();
+  eq(lang + ': cancelled Format or Minify is silent', page.tracks.length, before);
+  page.el('jf-input').value = '{"b":1}'; page.el('jf-format').click();
+  page.requests.at(-1).worker.onerror({ message: 'Controlled worker failure' });
+  await new Promise(setImmediate);
+  eq(lang + ': formatter Worker failure is silent', page.tracks.length, before);
+  page.el('jf-format').click(); await page.reply();
+  eq(lang + ': formatter retries after Worker failure', page.tracks.length, before + 1);
 }
 
 console.log((failures ? 'FAILED' : 'OK') + ': ' + passes + ' passed, ' + failures + ' failed, ' + skips + ' skipped');

@@ -845,6 +845,7 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
 
       /* ── Rendering ── */
       var current = null; // { canvas, results: [{ raw, charset }] }
+      var copyGeneration = 0;
 
       function el(tag, cls, text) {
         var e = document.createElement(tag);
@@ -854,13 +855,24 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
       }
       function copyButton(getText, action) {
         var b = el('button', 'btn-copy', t.copy);
+        var request = 0, timer;
         b.type = 'button';
         b.addEventListener('click', function () {
-          navigator.clipboard.writeText(getText()).then(function () {
-            b.textContent = t.copied; b.classList.add('copied');
-            setTimeout(function () { b.textContent = t.copy; b.classList.remove('copied'); }, 1500);
-          });
-          track(action);
+          var generation = copyGeneration, attempt = ++request;
+          clearTimeout(timer);
+          function active() { return generation === copyGeneration && attempt === request; }
+          try {
+            if (!navigator.clipboard || !navigator.clipboard.writeText) return;
+            navigator.clipboard.writeText(getText()).then(function () {
+              if (!active()) return;
+              b.textContent = t.copied; b.classList.add('copied');
+              track(action);
+              timer = setTimeout(function () {
+                if (!active()) return;
+                b.textContent = t.copy; b.classList.remove('copied');
+              }, 1500);
+            }, function () {});
+          } catch (e) {}
         });
         return b;
       }
@@ -959,6 +971,7 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
           CHARSETS.forEach(function (c) { var o = el('option', null, c[1]); o.value = c[0]; sel.appendChild(o); });
           sel.value = entry.charset || '';
           sel.addEventListener('change', function () {
+            copyGeneration++;
             entry.charset = sel.value || null;
             var fresh = renderCard(entry, index, total);
             card.replaceWith(fresh);
@@ -1003,6 +1016,7 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
       }
 
       function showResults(canvas, rawResults, scaledFrom) {
+        copyGeneration++;
         var sorted = sortResults(rawResults).map(function (r) { return { raw: r, charset: null }; });
         current = { canvas: canvas, results: sorted };
         resultsEl.textContent = '';
@@ -1044,6 +1058,7 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
 
       var busy = 0;
       function clearResults() {
+        copyGeneration++;
         current = null;
         resultsEl.textContent = '';
         resultArea.hidden = true;

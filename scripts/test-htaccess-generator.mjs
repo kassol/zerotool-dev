@@ -283,7 +283,7 @@ const SLUG='htaccess-generator',component=process.env.ZT_B13_SOURCE?relative(roo
 const templates={};
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};}
 function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}){
-  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],downloads=[],urls=new Map();let stored=structuredClone(saved);
+  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],downloads=[],tracks=[],urls=new Map();let stored=structuredClone(saved);
   let timerId=0,clock=0,doc;
   const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
   const matchOne = (el, selector) => {
@@ -378,7 +378,7 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   doc.execCommand=command=>{execCalls.push(command);throw Error('Native clipboard prohibited');};
   const persist={clear(slug){if(slug!=='cron-job-generator')stored={};persistCalls.push(['clear',slug]);},save(slug,data){stored=JSON.parse(JSON.stringify(data));persistCalls.push(['save',slug,stored]);},load(){return structuredClone(stored);}};
   const globals={document:doc,Date:class extends Date{constructor(...a){super(...(a.length?a:['2026-10-05T08:00:00Z']));}static now(){return Date.parse('2026-10-05T08:00:00Z');}},Blob,crypto:webcrypto,URL:{createObjectURL(blob){const url='blob:probe-'+urls.size;urls.set(url,blob);return url;},revokeObjectURL(url){urls.delete(url);}},require(name){if(name==='../../data/gitignore-templates')return templates;throw Error('Unreviewed import '+name);},fetch(){throw Error('Network prohibited');},
-    _slug:SLUG,ztPersist:persist,trackTool(){},
+    _slug:SLUG,ztPersist:persist,trackTool(...args){tracks.push(args);},
     navigator:noClipboard?{}:{clipboard:{writeText(value){const d=deferred();clipboard.push({...d,value:String(value)});return d.promise;},write(){throw Error('Unexpected clipboard.write');}}},
     setTimeout(fn,ms){timers.set(++timerId,{fn,ms,due:clock+ms});return timerId;},clearTimeout(id){timers.delete(id);},
   };
@@ -387,7 +387,7 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   if(order==='shared-after')actual.run(shortcut);
   const get=id=>{const el=doc.getElementById(id);must(el,SLUG+' ID '+id);return el;};
   const errors=[];activePage={errors};
-  return{errors,doc,get,widget,clipboard,timers,persistCalls,execCalls,downloads,stored:()=>structuredClone(stored),actual,
+  return{errors,doc,get,widget,clipboard,timers,persistCalls,execCalls,downloads,tracks,stored:()=>structuredClone(stored),actual,
     input(id,value,event='input'){get(id).value=value;get(id).dispatch(event);},
     ctrlL(id,key='l',mod='ctrlKey'){const el=get(id);el.focus();el.dispatch('keydown',{key,[mod]:true});},
     choose(id,checked){get(id).checked=checked;get(id).dispatch('change');},
@@ -502,6 +502,22 @@ for (const lang of ['en','zh','ja','ko']) {
     q.ctrlL('hta-redir-to');
     assert(lang+' Ctrl+L clears both field marks',[status.textContent,from.getAttribute('aria-invalid'),to.getAttribute('aria-invalid')],['',null,null]);
   }
+}
+
+for (const lang of ['en','zh','ja','ko']) {
+  const p=ready(lang),copy=p.get(COPY);
+  assert(lang+' initial generation is silent',p.tracks,[]);
+  copy.click();
+  assert(lang+' pending Copy is silent',p.tracks,[]);
+  p.clipboard.at(-1).reject(Error('clipboard denied'));
+  await settle();
+  assert(lang+' failed Copy is silent',p.tracks,[]);
+  copy.click();p.clipboard.at(-1).resolve();await settle();
+  assert(lang+' successful Copy preserves historical generate action',p.tracks,[['htaccess-generator','generate']]);
+  copy.click();const stale=p.clipboard.at(-1);p.input(INPUT,'new.html');stale.resolve();await settle();
+  assert(lang+' replaced result Copy is silent',p.tracks,[['htaccess-generator','generate']]);
+  copy.click();const cleared=p.clipboard.at(-1);p.ctrlL(INPUT);cleared.resolve();await settle();
+  assert(lang+' cleared Copy is silent',p.tracks,[['htaccess-generator','generate']]);
 }
 
 for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','shared-after']){
