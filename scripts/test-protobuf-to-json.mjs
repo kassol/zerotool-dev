@@ -927,6 +927,103 @@ check('pageErrText mirrors the component errText', /function errText\(e\) \{[\s\
 // the marker must equal the engine output for the given schema, input and options.
 const EXAMPLE_SCHEMA = source.match(/const EXAMPLE_SCHEMA = `([\s\S]*?)`;/)[1];
 const EXAMPLE_BYTES = source.match(/const EXAMPLE_BYTES = '([^']+)';/)[1];
+
+// S2-10g: complete page script with the shipped protobuf.js, browser events and async reads.
+{
+  const { loadPage } = await import('./astro-page-harness.mjs');
+  const nodes = new Map(), tracks = [];
+  const get = id => {
+    if (!nodes.has(id)) {
+      const e = { value: '', textContent: '', innerHTML: '', className: '', style: {}, hidden: false, handlers: {}, attrs: {},
+        setAttribute(k,v){this.attrs[k]=v;},getAttribute(k){return this.attrs[k];},
+        addEventListener(k,fn){(this.handlers[k] ||= []).push(fn);},
+        dispatch(type){for(const fn of this.handlers[type] || []) fn({type,target:this});},
+        click(){this.dispatch('click');},appendChild(n){return n;},remove(){},focus(){},
+      };
+      e.classList = { add(c){e.className += ' '+c;},remove(c){e.className=e.className.split(' ').filter(x=>x!==c).join(' ');},contains(c){return e.className.split(' ').includes(c);} };
+      nodes.set(id, e);
+    }
+    return nodes.get(id);
+  };
+  const modes = ['decode','encode','sample'].map(mode => {const e=get('mode-'+mode);e.attrs['data-mode']=mode;return e;});
+  const document = {getElementById:get,querySelectorAll:selector=>selector==='.pbj-mode'?modes:[],
+    addEventListener(){},createElement:tag=>get('node-'+nodes.size+'-'+tag),body:{appendChild(){},removeChild(){}},
+  };
+  const page = loadPage('src/components/tools/ProtobufToJsonTool.astro', {
+    globals:{document,protobuf:pb,S:STRINGS.en,EXAMPLE_SCHEMA,EXAMPLE_BYTES,TextDecoder,TextEncoder,atob,
+      trackTool:(...args)=>tracks.push(args)},
+  });
+  const settle = async () => {for(let i=0;i<8;i++) await Promise.resolve();};
+  const input = (id,value) => {get(id).value=value;get(id).dispatch('input');page.flush();};
+  page.flush();
+  eq('GA protobuf boot example silent', tracks, []);
+  input('pbj-schema', 'syntax = "proto3"; message Thing { int32 n = 1; }');
+  input('pbj-bytes', '08 07');
+  check('GA protobuf live decode remains successful', get('pbj-status').classList.contains('success'));
+  eq('GA protobuf typing silent', tracks, []);
+  get('pbj-bytes').dispatch('change'); page.flush();
+  eq('GA protobuf historical committed decode', tracks, [['protobuf_to_json','decode']]);
+  get('pbj-bytes').dispatch('change'); page.flush();
+  eq('GA protobuf repeated result deduplicated', tracks.length, 1);
+  input('pbj-bytes', 'ff');get('pbj-bytes').dispatch('change');page.flush();
+  eq('GA protobuf failed decode silent', tracks.length, 1);
+  input('pbj-bytes', '08 08');get('pbj-bytes').dispatch('change');page.flush();
+  eq('GA protobuf changed decode counted', tracks.length, 2);
+  input('pbj-json', '{"n":9}');get('mode-encode').click();page.flush();
+  eq('GA protobuf explicit encode action preserved', tracks.at(-1), ['protobuf_to_json','encode']);
+  eq('GA protobuf live encoding output preserved', get('pbj-output').textContent, '08 09');
+  get('pbj-json').dispatch('change');page.flush();
+  eq('GA protobuf unchanged encode deduplicated', tracks.length, 3);
+  get('mode-sample').click();page.flush();
+  eq('GA protobuf explicit sample action preserved', tracks.at(-1), ['protobuf_to_json','sample']);
+  get('mode-sample').click();page.flush();
+  eq('GA protobuf unchanged sample deduplicated', tracks.length, 4);
+
+  // Real gunzip entry point, with only the browser stream/read boundary held pending.
+  const decompressions = [];
+  page.ctx.DecompressionStream = class {};
+  page.ctx.Blob = class {stream(){return {pipeThrough:()=>({})};}};
+  page.ctx.Response = class {arrayBuffer(){return new Promise(resolve=>decompressions.push(resolve));}};
+  get('mode-decode').click();page.flush();
+  const beforeAsync = tracks.length;
+  const beforeInflate = get('pbj-output').innerHTML;
+  get('pbj-bytes').value = '01 00 00 00 01 00';get('pbj-grpc').dispatch('change');
+  check('GA protobuf compressed input reaches browser decompression boundary', decompressions.length === 1);
+  get('pbj-bytes').value = '08 0b';get('pbj-bytes').dispatch('input');
+  if(decompressions.length) decompressions.shift()(Uint8Array.from([8,10]).buffer);
+  await settle();
+  eq('GA protobuf obsolete compressed result silent before debounce', tracks.length, beforeAsync);
+  eq('GA protobuf obsolete compressed result cannot replace the live output', get('pbj-output').innerHTML, beforeInflate);
+  page.flush();
+  get('pbj-bytes').dispatch('change');page.flush();
+  eq('GA protobuf current result after stale decompression counted', tracks.length, beforeAsync+1);
+  get('pbj-bytes').value = '01 00 00 00 01 00';get('pbj-bytes').dispatch('change');
+  check('GA protobuf committed gzip waits for browser decompression', decompressions.length === 1 && tracks.length === beforeAsync+1);
+  if(decompressions.length) decompressions.shift()(Uint8Array.from([8,13]).buffer);
+  await settle();page.flush();
+  eq('GA protobuf current gzip completion preserves decode action', tracks.at(-1), ['protobuf_to_json','decode']);
+  eq('GA protobuf current gzip result counted after completion', tracks.length, beforeAsync+2);
+  let finishBinary;
+  get('pbj-bin-file').files = [{size:2,name:'message.bin',arrayBuffer:()=>new Promise(resolve=>{finishBinary=resolve;})}];
+  get('pbj-bin-file').dispatch('change');
+  input('pbj-bytes','08 0c');
+  finishBinary(Uint8Array.from([8,99]).buffer);await settle();page.flush();
+  eq('GA protobuf obsolete binary read does not replace edited input',get('pbj-bytes').value,'08 0c');
+  get('pbj-bin-file').files = [{size:2,name:'current.bin',arrayBuffer:()=>Promise.resolve(Uint8Array.from([8,14]).buffer)}];
+  const beforeCurrentFile = tracks.length;
+  get('pbj-bin-file').dispatch('change');await settle();page.flush();
+  eq('GA protobuf current binary read remains functional', get('pbj-bytes').value, '08 0e');
+  eq('GA protobuf successful current binary file action counted', tracks.length, beforeCurrentFile+1);
+  let finishProto;
+  get('pbj-proto-files').files = [{name:'late.proto',text:()=>new Promise(resolve=>{finishProto=resolve;})}];
+  get('pbj-proto-files').dispatch('change');
+  get('pbj-clear').click();
+  const beforeClear = tracks.length;
+  finishProto('syntax = "proto3"; message Late { string value = 1; }');await settle();page.flush();
+  eq('GA protobuf clear invalidates pending schema read',get('pbj-schema').value,'');
+  eq('GA protobuf cleared and stale file work silent',tracks.length,beforeClear);
+}
+
 let mdxChecks = 0;
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   let mdx;
@@ -1008,10 +1105,10 @@ check('tool pages carry checked examples', mdxChecks >= 8, mdxChecks + ' found')
   check('an empty input clears the old output, bytes and notes', /function showEmpty\(text\) \{\s*state\.outText = '';\s*state\.lastBytes = null;\s*els\.output\.textContent = '';[\s\S]{0,120}setStatus\(text, 'none'\);\s*setNotes\(\[\]\);/.test(script) &&
     script.includes("if (!text.trim()) return showEmpty(S.st.empty);") && script.includes("if (!text.trim()) return showEmpty(S.st.emptyJson);"));
   check('no run button: typing, the type list, every option and both mode buttons run by themselves', !markup.includes('pbj-go') && !/els\.go\b/.test(script) && !/run(Decode|Encode|Sample):/.test(fm) &&
-    script.includes("els.bytes.addEventListener('input', function () { schedule(250); });") && script.includes("els.json.addEventListener('input', function () { schedule(300); });") &&
-    script.includes('state.schemaTimer = setTimeout(function () { rebuildSchema(); run(); }, 400);') && script.includes("els.type.addEventListener('change', function () { syncRawFlag(); run(); });") &&
-    /el\.addEventListener\('change', function \(\) \{\s*prefs\[key\] = isCheck \? el\.checked : el\.value;\s*savePrefs\(\);\s*run\(\);/.test(script) &&
-    /b\.addEventListener\('click', function \(\) \{[\s\S]{0,200}setMode\(mode\);\s*savePrefs\(\);\s*run\(\);/.test(script));
+    script.includes("els.bytes.addEventListener('input', function () { schedule(250, 'bytes'); });") && script.includes("els.json.addEventListener('input', function () { schedule(300); });") &&
+    script.includes("schedule(400, 'schema');") && script.includes("els.type.addEventListener('change', function () { syncRawFlag(); run(true); });") &&
+    /el\.addEventListener\('change', function \(\) \{\s*prefs\[key\] = isCheck \? el\.checked : el\.value;\s*savePrefs\(\);\s*run\(true\);/.test(script) &&
+    /b\.addEventListener\('click', function \(\) \{[\s\S]{0,250}setMode\(mode\);\s*savePrefs\(\);\s*run\(true\);/.test(script));
   const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
   check('listed as a convert page', layouts.includes("'protobuf-to-json': 'convert'"));
   for (const lang of ['en', 'zh', 'ja', 'ko']) {

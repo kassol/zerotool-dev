@@ -28,6 +28,7 @@ import os from 'node:os';
 import vm from 'node:vm';
 import { patchJqWeb, PATCHES, JQ_WEB_VERSION } from './jq-web-patch.mjs';
 import * as E from '../src/components/tools/jq-playground-engine.js';
+import { loadPage } from './astro-page-harness.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const commonStyle = readFileSync(join(root, 'src/styles/tool-common.css'), 'utf8');
@@ -527,6 +528,137 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     check(lang + ' mdx: no usage section in the body', !/^## (How to use|用法|使い方|사용 방법)\s*$/im.test(body));
     check(lang + ' mdx: the limits section stays', /^## (Limits|限制|制限|제한)\s*$/m.test(body));
   }
+}
+
+// Exercise the real page script and jq engine, controlling only Worker/clipboard/timer delivery.
+function outcomePage(lang, saved = null) {
+  const requests = [], clipboard = [], tracks = [], savedCalls = [], timers = new Map();
+  let clock = 0, timerId = 0;
+  class ControlledWorker {
+    postMessage(request) { requests.push({ worker: this, request }); }
+    terminate() { this.terminated = true; }
+  }
+  const page = loadPage('src/components/tools/JqPlaygroundTool.astro', {
+    lang, dataset: { 'jqp-wrap': { strings: JSON.stringify(STRINGS[lang]) } },
+    preset: { 'jqp-filter': E.DEFAULT_FILTER, 'jqp-input': E.SAMPLE_INPUT },
+    globals: {
+      Worker: ControlledWorker, Blob, TextDecoder,
+      location: { origin: 'https://example.test', pathname: '/tools/jq-playground/', search: '', hash: '' },
+      history: { replaceState() {} }, addEventListener() {},
+      ztPersist: { load() { return saved; }, save(slug, data) { savedCalls.push(JSON.parse(JSON.stringify(data))); }, clear() {} },
+      trackTool(...args) { tracks.push(args); },
+      navigator: { clipboard: { writeText(text) {
+        let resolve, reject;
+        const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+        clipboard.push({ text, resolve, reject }); return promise;
+      } } },
+      setInterval() { return 0; }, clearInterval() {},
+      setTimeout(fn, ms) { const id = ++timerId; timers.set(id, { fn, due: clock + ms }); return id; },
+      clearTimeout(id) { timers.delete(id); },
+    },
+  });
+  return { ...page, requests, clipboard, tracks, savedCalls,
+    advance(ms) {
+      clock += ms;
+      for (;;) {
+        const next = [...timers].filter(([, t]) => t.due <= clock).sort((a, b) => a[1].due - b[1].due)[0];
+        if (!next) break;
+        timers.delete(next[0]); next[1].fn();
+      }
+    },
+    async reply(index = requests.length - 1, override) {
+      const { worker, request } = requests[index];
+      worker.onmessage({ data: { type: 'ready' } });
+      worker.onmessage({ data: { type: 'result', id: request.id, ...(override || jq.run(request.input, request.filter, request.flags)) } });
+      await new Promise(setImmediate);
+    },
+  };
+}
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const page = outcomePage(lang);
+  page.el('jqp-filter').value = '.';
+  page.el('jqp-input').value = '{"a":2}'; page.el('jqp-input').dispatch('input');
+  page.advance(250); await page.reply(); page.advance(1500);
+  check(lang + ': live jq output still updates', page.el('jqp-code').innerHTML.includes('"a"') && page.el('jqp-stderr').textContent === '');
+  eq(lang + ': live successful jq execution stays silent', page.tracks, []);
+  page.el('jqp-input').dispatch('change');
+  if (page.requests.length > 1) await page.reply();
+  page.advance(1500);
+  eq(lang + ': committed successful input records run once', page.tracks, [['jq-playground', 'run']]);
+  const before = page.tracks.length;
+  page.el('jqp-run').click();
+  eq(lang + ': pending Run button is silent', page.tracks.length, before);
+  await page.reply(); page.advance(1500);
+  eq(lang + ': unchanged committed run is deduplicated', page.tracks.length, before);
+  page.el('jqp-filter').value = '.a + 1'; page.el('jqp-run').click();
+  eq(lang + ': new Run button waits for success', page.tracks.length, before);
+  await page.reply(); page.advance(1500);
+  eq(lang + ': successful Run button keeps its action without double count', page.tracks.slice(before), [['jq-playground', 'run-button']]);
+  const good = page.tracks.length;
+  page.el('jqp-filter').value = '.a +'; page.el('jqp-run').click(); await page.reply(); page.advance(1500);
+  eq(lang + ': jq compile failure is silent', page.tracks.length, good);
+  page.el('jqp-filter').value = '.a + 2'; page.el('jqp-run').click();
+  page.el('jqp-filter').value = '.a + 3'; page.el('jqp-filter').dispatch('input');
+  await page.reply(); page.advance(1500);
+  eq(lang + ': obsolete jq completion is silent', page.tracks.length, good);
+  await page.reply();
+  page.el('jqp-copy').click();
+  eq(lang + ': pending output copy is silent', page.tracks.length, good);
+  page.clipboard.at(-1).reject(Error('Clipboard denied')); await new Promise(setImmediate);
+  eq(lang + ': failed output copy is silent', page.tracks.length, good);
+  page.el('jqp-copy').click(); page.clipboard.at(-1).resolve(); await new Promise(setImmediate);
+  eq(lang + ': successful output copy keeps historical action', page.tracks.at(-1), ['jq-playground', 'copy']);
+  const copied = page.tracks.length;
+  page.el('jqp-copy-link').click();
+  eq(lang + ': pending share-link copy is silent', page.tracks.length, copied);
+  page.el('jqp-filter').value = '.a + 4'; page.el('jqp-filter').dispatch('input');
+  page.clipboard.at(-1).resolve(); await new Promise(setImmediate);
+  eq(lang + ': stale share-link copy is silent', page.tracks.length, copied);
+  page.el('jqp-copy-link').click(); page.clipboard.at(-1).reject(Error('Clipboard denied')); await new Promise(setImmediate);
+  eq(lang + ': failed share-link copy is silent', page.tracks.length, copied);
+  page.el('jqp-copy-link').click(); page.clipboard.at(-1).resolve(); await new Promise(setImmediate);
+  eq(lang + ': successful share-link copy keeps historical action', page.tracks.at(-1), ['jq-playground', 'share']);
+  page.el('jqp-copy-link').click(); const oldCopy = page.clipboard.at(-1);
+  page.el('jqp-copy-link').click(); page.clipboard.at(-1).resolve(); await new Promise(setImmediate);
+  const latestCopies = page.tracks.length;
+  oldCopy.resolve(); await new Promise(setImmediate);
+  eq(lang + ': superseded share copy is silent', page.tracks.length, latestCopies);
+  const restored = outcomePage(lang, { filter: '.a', json: '{"a":5}', opts: {}, args: [] });
+  await restored.reply(); restored.advance(1500);
+  eq(lang + ': restored jq execution is silent', restored.tracks, []);
+  const filePage = outcomePage(lang);
+  filePage.el('jqp-filter').value = '.a';
+  filePage.el('jqp-file').files = [{ name: 'example.json', size: 7, arrayBuffer: async () => new TextEncoder().encode('{"a":9}').buffer }];
+  filePage.el('jqp-file').dispatch('change'); await new Promise(setImmediate);
+  await filePage.reply(); filePage.advance(1500);
+  eq(lang + ': explicit file run records only after success', filePage.tracks, [['jq-playground', 'run']]);
+  eq(lang + ': small file text uses the existing editor persistence path', filePage.savedCalls.at(-1).json, '{"a":9}');
+  let resolveRead;
+  filePage.el('jqp-file').files = [{ name: 'old.json', size: 7, arrayBuffer: () => new Promise(resolve => { resolveRead = resolve; }) }];
+  filePage.el('jqp-file').dispatch('change');
+  filePage.el('jqp-clear').click();
+  const cleared = filePage.tracks.length, sent = filePage.requests.length;
+  resolveRead(new TextEncoder().encode('{"a":8}').buffer); await new Promise(setImmediate);
+  eq(lang + ': cleared file read does not run or restore input', [filePage.requests.length, filePage.el('jqp-input').value, filePage.tracks.length], [sent, '', cleared]);
+  const queued = outcomePage(lang);
+  queued.el('jqp-input').value = '{"a":2}';
+  for (const query of ['.a', '.a + 1', '.a + 2']) { queued.el('jqp-filter').value = query; queued.el('jqp-run').click(); }
+  await queued.reply(0);
+  eq(lang + ': obsolete queued runs do not record outcomes', queued.tracks, []);
+  await queued.reply(); queued.advance(1500);
+  eq(lang + ': only the latest queued run succeeds and records once', [queued.el('jqp-code').innerHTML.replace(/<[^>]*>/g, ''), queued.tracks], ['4\n', [['jq-playground', 'run-button']]]);
+  queued.el('jqp-filter').value = '.a + 3'; queued.el('jqp-run').click();
+  const cancelled = queued.requests.length - 1;
+  queued.el('jqp-clear').click(); const atClear = queued.tracks.length;
+  await queued.reply(cancelled); queued.advance(1500);
+  eq(lang + ': cancelled jq run stays cleared and silent', [queued.el('jqp-code').textContent, queued.tracks.length], ['', atClear]);
+  const failed = outcomePage(lang);
+  failed.el('jqp-filter').value = '.'; failed.el('jqp-run').click();
+  await failed.reply(0, { stdout: 'partial', stderr: 'runtime failure', exitCode: 5 }); failed.advance(1500);
+  eq(lang + ': partial output with nonzero exit is silent', failed.tracks, []);
+  failed.el('jqp-run').click();
+  await failed.reply(1, { stdout: '', stderr: 'fatal failure', fatal: 'worker stopped', exitCode: null }); failed.advance(1500);
+  eq(lang + ': fatal jq result is silent', failed.tracks, []);
 }
 
 rmSync(tmp, { recursive: true, force: true });

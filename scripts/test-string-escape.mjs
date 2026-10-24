@@ -42,6 +42,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { decodeHTML } from 'entities';
+import { loadPage } from './astro-page-harness.mjs';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -641,6 +642,42 @@ const utf8hex = (s) => [...Buffer.from(s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDF
       eq(f + ': ' + mode + ' ' + dir2 + ' ' + input, got, JSON.parse(expected));
     }
   }
+}
+
+// S2-10g extension: complete page events at the established VM seam.
+{
+  const open = (preset = '') => {
+    const nodes = new Map(), tracks = [];
+    const get = id => {
+      if (!nodes.has(id)) nodes.set(id, {value:'',textContent:'',className:'',hidden:false,checked:false,handlers:{},
+        setAttribute(){},getAttribute(){return null;},focus(){},addEventListener(type,fn){(this.handlers[type] ||= []).push(fn);},
+        dispatch(type){for(const fn of this.handlers[type] || []) fn({type,target:this});},click(){this.dispatch('click');},
+      });
+      return nodes.get(id);
+    };
+    get('se-input').value = preset;
+    const document = { getElementById:get,querySelectorAll:() => [],addEventListener(){},
+      implementation:{createHTMLDocument:() => ({createElement:() => ({set innerHTML(value){this.value=decodeHTML(value);}})})},
+    };
+    const p = loadPage('src/components/tools/StringEscapeTool.astro', {globals:{document,t:STRINGS.en,trackTool:(...args) => tracks.push(args)}});
+    return {get,tracks,flush:() => p.flush(),input(value){get('se-input').value=value;get('se-input').dispatch('input');p.flush();}};
+  };
+  const p = open();
+  p.input('say "hi"');
+  eq('GA String Escape live output preserved', p.get('se-output').value, String.raw`say \"hi\"`);
+  eq('GA String Escape typing silent', p.tracks, []);
+  p.get('se-input').dispatch('change');
+  eq('GA String Escape historical committed action', p.tracks, [['string-escape','json_escape']]);
+  p.get('se-input').dispatch('change');
+  eq('GA String Escape unchanged result deduplicated', p.tracks.length, 1);
+  p.input('another value'); p.get('se-input').dispatch('change');
+  eq('GA String Escape new same-format result counted', p.tracks.length, 2);
+  p.get('se-swap').click();
+  eq('GA String Escape explicit swap records successful direction', p.tracks.at(-1), ['string-escape','json_unescape']);
+  p.input('\\q'); p.get('se-input').dispatch('change');
+  eq('GA String Escape failed commit silent', p.tracks.length, 3);
+  const restored = open('restored text'); restored.flush();
+  eq('GA String Escape initial text silent', restored.tracks, []);
 }
 
 // ── v2 page layout (DESIGN.md "Tool Pages v2", kind: convert) ───────────────────

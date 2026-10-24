@@ -522,5 +522,22 @@ check('v2 compiled mobile empty selector retained', compiledCss.includes(':place
 new Function(script); check('v2 real client script parses without tips', !script.includes('TIPS'));
 
 
+// S2-10g: live results stay available; only committed successful work counts.
+{
+  const p = lifecyclePage();
+  same('GA initial render silent', p.tracks, []);
+  p.convert();
+  same('GA live conversion preserved', p.out.value, lifecycleSpec.expected);
+  same('GA typing silent', p.tracks, []);
+  p.input.dispatch('change');
+  same('GA committed conversion keeps historical name', p.tracks, [['html_to_jsx', 'convert']]);
+  p.input.dispatch('change');
+  same('GA unchanged result deduplicated', p.tracks.length, 1);
+  p.convert(lifecycleSpec.invalid); p.input.dispatch('change');
+  same('GA refused conversion silent', p.tracks.length, 1);
+  p.convert(lifecycleSpec.next); p.input.dispatch('change');
+  same('GA next committed result counted', p.tracks.length, 2);
+}
+
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

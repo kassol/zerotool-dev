@@ -326,8 +326,8 @@ check('v2 Astro compilation diagnostics',!compiled.diagnostics.some(d=>d.severit
 let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(e){moduleError=String(e);}eq('v2 generated module parses',moduleError,'');
 const css=compiled.css.join('\n'),scope=css.match(/data-astro-cid-[\w-]+/)[0];
 const hash=v=>createHash('sha256').update(v).digest('hex');
-// Hash updated by S2-9 (2026-10-09): localized error messages, the full-width and space-like notes, analytics on change / copy success, and the copy fallback.
-eq('v2 whole client core retained apart from shared Copy class',hash(source.slice(source.indexOf('      var inputEl ='),source.indexOf('  </script>')).replace('csc-copy-btn btn-copy','csc-copy-btn')),'cbe079498a370b86fcdd29f9144272460ebde09dfdf4053e1045d095d7974224');
+// S2-10g (2026-10-24, approved): committed analytics waits for successful parsing; engine bytes remain protected above.
+eq('v2 whole client core retained apart from shared Copy class',hash(source.slice(source.indexOf('      var inputEl ='),source.indexOf('  </script>')).replace('csc-copy-btn btn-copy','csc-copy-btn')),'5c543cba5e9e5f11071d2b583dcbd6af6663f65fa9ce29a306b63712fb0a34ca');
 check('v2 direct flex root',/^<div class="csc-wrap">/.test(markupTemplate)&&/\.csc-wrap[^{}]*\{[^}]*min-width:\s*0[^}]*min-height:\s*0/.test(css));
 check('v2 input before reserved hint/status before results',markupTemplate.indexOf('id="csc-input"')<markupTemplate.indexOf('csc-hint csc-status')&&markupTemplate.indexOf('csc-hint csc-status')<markupTemplate.indexOf('class="csc-result-section"'));
 check('v2 fixed hint/status height',/\.csc-status[^{}]*\{[^}]*height:\s*2\.8em[^}]*overflow:\s*auto/.test(css));
@@ -469,12 +469,26 @@ check('ko note says Chrome이 읽는 방식대로', locale('ko').CLIENT_T.spaceA
 // `copy` only after a successful copy.
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const p = page(lang, 'shared-after'), calcs = () => p.tracks.filter(x => x[1] === 'calc').length, copies = () => p.tracks.filter(x => x[1] === 'copy').length;
+  const commit = () => { const ev = p.document.createEvent('Event'); ev.initEvent('change', true, true); p.input.dispatchEvent(ev); };
+  eq(lang + ' GA: boot sends nothing', p.tracks, []);
   p.type('#a'); p.tick(200); p.type('#a .b'); p.tick(200); p.type('#a .b:hover'); p.tick(200);
   eq(lang + ' GA: typing pauses send no calc', calcs(), 0);
   const ev = p.document.createEvent('Event'); ev.initEvent('change', true, true); p.input.dispatchEvent(ev);
   eq(lang + ' GA: committed change sends one calc', calcs(), 1);
   p.input.value = ''; const ev2 = p.document.createEvent('Event'); ev2.initEvent('change', true, true); p.input.dispatchEvent(ev2);
   eq(lang + ' GA: empty change sends nothing', calcs(), 1);
+  for (const value of [':is(', 'a)b', '#valid, :is(']) {
+    p.type(value); commit();
+    eq(lang + ' GA: invalid or mixed commit before debounce sends nothing: ' + value, calcs(), 1);
+    check(lang + ' GA: committed invalid input updates error immediately', !!p.result.querySelector('.csc-error-msg'));
+    p.tick(200);
+    eq(lang + ' GA: invalid debounce cannot send a delayed event', calcs(), 1);
+  }
+  p.type('a:hover'); commit();
+  eq(lang + ' GA: recovered commit renders current valid tuple immediately', p.tuples(), ['(0, 1, 1)']);
+  eq(lang + ' GA: recovered valid commit sends once', calcs(), 2);
+  eq(lang + ' GA: successful commit preserves tool and action', p.tracks.at(-1), ['css-specificity-calculator', 'calc']);
+  p.tick(200); eq(lang + ' GA: prior debounce cannot duplicate successful commit', calcs(), 2);
   p.type('#a .b:hover'); p.tick(200);
   const btn = p.buttons()[0]; p.click(btn); eq(lang + ' GA: copy request alone sends nothing', copies(), 0);
   p.clipboard[0].reject(Error('denied')); await settle(); eq(lang + ' GA: failed copy sends nothing', copies(), 0);

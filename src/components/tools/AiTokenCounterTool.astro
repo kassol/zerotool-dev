@@ -1,7 +1,7 @@
 ---
 // AiTokenCounterTool — count tokens with the tokenizers that are published for local use
 // (OpenAI o200k_base / cl100k_base, DeepSeek V4) and estimate API cost from official prices.
-// Vocabularies are loaded on demand as separate chunks; text never leaves the page.
+// Vocabularies load on demand as static chunks; their requests do not contain input text.
 import Toggletip from '../Toggletip.astro';
 
 interface Props {
@@ -12,7 +12,7 @@ const { lang = 'en' } = Astro.props;
 /* ── strings:start ── */
 const STRINGS = {
   en: {
-    networkNote: "Tokenizer vocabularies load from this site as needed. Input text stays in your browser.",
+    networkNote: "Tokenizer vocabularies load from this site as needed. Counting runs in a browser Worker; vocabulary requests contain no input text.",
     tips: {
       input: "Paste plain text, a prompt or code. Counts update as you type; editing or clearing cancels the previous count. Message roles, tool definitions, images and PDFs are not included.",
       file: "Open a UTF-8 text file up to 20 MB. Reading a new file replaces the text. Typing, Sample or Clear discards an unfinished file read.",
@@ -76,7 +76,7 @@ const STRINGS = {
     statsPrices: 'Prices checked {date}',
   },
   zh: {
-    networkNote: "分词器词表按需从本站加载，输入文字留在浏览器内。",
+    networkNote: "分词器词表按需从本站加载；计算在浏览器 Worker 中完成，词表请求不含输入文字。",
     tips: {
       input: "粘贴纯文本、prompt 或代码，数量随输入更新；修改或清空会终止上一轮计算。角色标记、工具定义、图片和 PDF 不在计数范围内。",
       file: "打开不超过 20 MB 的 UTF-8 文本文件，读取成功后替换输入。继续输入、点「示例」或「清空」会作废尚未完成的文件读取。",
@@ -140,7 +140,7 @@ const STRINGS = {
     statsPrices: '价格核对日期 {date}',
   },
   ja: {
-    networkNote: "tokenizer の語彙は本サイトから必要に応じて読み込みます。入力テキストはブラウザー内に留まります。",
+    networkNote: "tokenizer の語彙は本サイトから必要に応じて読み込みます。計算はブラウザーの Worker で行い、語彙の取得リクエストに入力テキストは含みません。",
     tips: {
       input: "プレーンテキスト、プロンプト、コードを貼り付けると入力に合わせて更新します。編集や消去で前の計算を終了します。ロール、ツール定義、画像、PDF は数に含みません。",
       file: "20 MB までの UTF-8 テキストファイルを開き、入力を置き換えます。入力の編集、「サンプル」「クリア」は未完了のファイル読み込みを無効にします。",
@@ -204,7 +204,7 @@ const STRINGS = {
     statsPrices: '料金確認日 {date}',
   },
   ko: {
-    networkNote: "토크나이저 어휘는 필요할 때 이 사이트에서 불러옵니다. 입력 텍스트는 브라우저 안에 남습니다.",
+    networkNote: "토크나이저 어휘는 필요할 때 이 사이트에서 불러옵니다. 계산은 브라우저 Worker에서 하며 어휘 요청에는 입력 텍스트가 포함되지 않습니다.",
     tips: {
       input: "일반 텍스트, 프롬프트, 코드를 붙여 넣으면 입력에 맞춰 갱신합니다. 수정하거나 지우면 이전 계산을 종료합니다. 역할 표시, 도구 정의, 이미지, PDF는 포함하지 않습니다.",
       file: "20 MB 이하 UTF-8 텍스트 파일을 열어 입력을 바꿉니다. 계속 입력하거나 「예시」 또는 「지우기」를 누르면 진행 중이던 파일 읽기는 무효가 됩니다.",
@@ -626,7 +626,8 @@ const sample = (SAMPLES as Record<string, string>)[lang] || SAMPLES.en;
     renderViz();
   }
 
-  async function run() {
+  const lastTrackedResults = new Map<string, string>();
+  async function run(action?: string) {
     const gen = ++generation;
     const text = input.value;
     if (!text) {
@@ -655,6 +656,13 @@ const sample = (SAMPLES as Record<string, string>)[lang] || SAMPLES.en;
       const bad = keys.find(key => failed[key]);
       setStatus(bad ? fill(S.loadFailed, { name: NAMES[bad], msg: failed[bad] }) : fill(S.done, { tokens: results.o200k ? numberFmt.format(results.o200k.count) : '—', chars: numberFmt.format(lastStats.chars), ms: Math.max(1, Math.round(fresh.ms)) }), bad ? 'error' : '');
       renderAll();
+      if (action && !bad && results.o200k) {
+        const resultKey = JSON.stringify([fresh.stats, fresh.results]);
+        if (lastTrackedResults.get(action) !== resultKey) {
+          lastTrackedResults.set(action, resultKey);
+          if (window.trackTool) window.trackTool(SLUG, action);
+        }
+      }
     } catch (error: any) {
       if (gen !== generation) return;
       keys.forEach(key => { failed[key] = error.message; loading[key] = false; });
@@ -670,7 +678,8 @@ const sample = (SAMPLES as Record<string, string>)[lang] || SAMPLES.en;
   }
 
   let timer = 0;
-  function schedule(delay = 120) {
+  function schedule(delay = 120, action?: string) {
+    copyBtn.textContent = S.copyStats;
     window.clearTimeout(timer);
     generation++;
     client.cancel();
@@ -679,14 +688,14 @@ const sample = (SAMPLES as Record<string, string>)[lang] || SAMPLES.en;
     lastStats = { chars: 0, bytes: 0, words: 0, lines: 0 };
     renderStats();
     renderAll();
-    timer = window.setTimeout(() => { void run(); persist(); }, delay);
+    timer = window.setTimeout(() => { void run(action); persist(); }, delay);
   }
 
   input.addEventListener('input', () => {
     fileGeneration++;
     schedule(input.value.length > 200000 ? 400 : 120);
-    if (window.trackTool) window.trackTool(SLUG, 'count');
   });
+  input.addEventListener('change', () => schedule(0, 'count'));
   outInput.addEventListener('input', () => { renderTable(); persist(); });
   vizEnc.addEventListener('change', () => {
     const key = vizEnc.value;
@@ -701,16 +710,14 @@ const sample = (SAMPLES as Record<string, string>)[lang] || SAMPLES.en;
       wanted[key] = true;
       failed[key] = null;
       renderCards();
-      schedule(0);
-      if (window.trackTool) window.trackTool(SLUG, 'load-' + key);
+      schedule(0, 'load-' + key);
     });
   });
 
   (document.getElementById('atc-sample') as HTMLButtonElement).addEventListener('click', () => {
     fileGeneration++;
     input.value = wrap.dataset.sample || '';
-    schedule(0);
-    if (window.trackTool) window.trackTool(SLUG, 'sample');
+    schedule(0, 'sample');
   });
 
   (document.getElementById('atc-clear') as HTMLButtonElement).addEventListener('click', () => {
@@ -742,29 +749,32 @@ const sample = (SAMPLES as Record<string, string>)[lang] || SAMPLES.en;
       const buf = await file.arrayBuffer();
       if (fileGen !== fileGeneration) return;
       input.value = new TextDecoder('utf-8', { fatal: true }).decode(buf);
-      schedule(0);
-      if (window.trackTool) window.trackTool(SLUG, 'file');
+      schedule(0, 'file');
     } catch (_) {
       if (fileGen !== fileGeneration) return;
       setStatus(S.fileNotText, 'error');
     }
   });
 
+  let copyRevision = 0;
   copyBtn.addEventListener('click', async () => {
+    const revision = ++copyRevision, gen = generation;
+    const current = () => revision === copyRevision && gen === generation;
     const lines = [S.statsTitle + ' — ' + numberFmt.format(lastStats.chars) + ' ' + S.statChars + ', ' + numberFmt.format(lastStats.bytes) + ' ' + S.statBytes];
     for (const key of ['o200k', 'deepseek', 'cl100k']) {
       if (results[key]) lines.push(NAMES[key] + ': ' + numberFmt.format(results[key]!.count) + ' ' + S.tokens);
     }
     lines.push(fill(S.statsPrices, { date: PRICES_CHECKED }));
     const textOut = lines.join('\n');
-    const original = copyBtn.textContent;
+    const original = S.copyStats;
     try {
       await navigator.clipboard.writeText(textOut);
+      if (!current()) return;
       copyBtn.textContent = S.copied;
-      window.setTimeout(() => { copyBtn.textContent = original; }, 1400);
+      window.setTimeout(() => { if (current()) copyBtn.textContent = original; }, 1400);
       if (window.trackTool) window.trackTool(SLUG, 'copy-stats');
     } catch (_) {
-      setStatus(S.copyFailed, 'error');
+      if (current()) setStatus(S.copyFailed, 'error');
     }
   });
 

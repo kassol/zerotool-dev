@@ -10,7 +10,7 @@ const { lang = 'en' } = Astro.props;
 const STRINGS = {
   en: {
     dropTitle: 'Drop SVG files here, or click to choose',
-    dropHint: 'Several files are converted with the same settings. Files stay in your browser.',
+    dropHint: 'Several files are converted with the same settings. This page reads and draws the SVG without uploading it.',
     codeLabel: 'SVG code', codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
     convertCode: 'Convert',
     outLabel: 'Result', outEmpty: 'Drop an SVG, or paste code and press Convert. The image size, the preview and the download button appear here.',
@@ -92,7 +92,7 @@ const STRINGS = {
   },
   zh: {
     dropTitle: '把 SVG 文件拖到这里，或点击选择',
-    dropHint: '可一次选多个文件，按同一设置转换。文件不离开浏览器。',
+    dropHint: '可一次选多个文件，按同一设置转换。本页读取并绘制 SVG，不上传文件。',
     codeLabel: 'SVG 代码', codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
     convertCode: '转换',
     outLabel: '结果', outEmpty: '放入 SVG，或粘贴代码后点「转换」，这里显示图像尺寸、预览和下载按钮。',
@@ -173,7 +173,7 @@ const STRINGS = {
   },
   ja: {
     dropTitle: 'SVG ファイルをここにドロップ、またはクリックして選択',
-    dropHint: '複数ファイルを同じ設定で一括変換できます。ファイルはブラウザの外に出ません。',
+    dropHint: '複数ファイルを同じ設定で一括変換できます。このページで SVG を読み込んで描画し、ファイルはアップロードしません。',
     codeLabel: 'SVG コード', codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
     convertCode: '変換',
     outLabel: '結果', outEmpty: 'SVG をドロップするか、コードを貼り付けて「変換」を押すと、ここに画像サイズ・プレビュー・ダウンロードボタンが表示されます。',
@@ -254,7 +254,7 @@ const STRINGS = {
   },
   ko: {
     dropTitle: 'SVG 파일을 여기에 끌어 놓거나 클릭해서 선택',
-    dropHint: '여러 파일을 같은 설정으로 한 번에 변환합니다. 파일은 브라우저 밖으로 나가지 않습니다.',
+    dropHint: '여러 파일을 같은 설정으로 한 번에 변환합니다. 이 페이지에서 SVG를 읽고 그리며 파일을 업로드하지 않습니다.',
     codeLabel: 'SVG 코드', codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
     convertCode: '변환',
     outLabel: '결과', outEmpty: 'SVG를 끌어 놓거나 코드를 붙여 넣고 「변환」을 누르면 여기에 이미지 크기, 미리보기, 다운로드 버튼이 표시됩니다.',
@@ -929,6 +929,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
 
       var FORMAT_LABEL = { 'image/png': 'PNG', 'image/jpeg': 'JPEG', 'image/webp': 'WebP' };
       var state = { items: [], active: 0, gen: 0, skipped: [] };
+      var sourceRevision = 0, lastTrackedResult;
 
       function fill(tpl, vars) {
         return String(tpl).replace(/\{(\w+)\}/g, function (m, k) { return vars && vars[k] != null ? vars[k] : m; });
@@ -1064,18 +1065,22 @@ const { tips: TIPS, ...CLIENT_T } = T;
       }
 
       var timer = null;
-      function schedule() {
+      function schedule(track) {
+        state.gen++;
         syncOptionUi();
         if (!state.items.length) return;
         clearTimeout(timer);
-        timer = setTimeout(run, 250);
+        timer = setTimeout(function () { run(track === true); }, 250);
       }
-      modeEl.addEventListener('change', function () { prefillSize(); schedule(); });
-      [scaleEl, widthEl, heightEl, qualityEl].forEach(function (el) { el.addEventListener('input', schedule); });
-      [formatEl, bgEl, colorEl].forEach(function (el) { el.addEventListener('change', schedule); });
-      colorEl.addEventListener('input', schedule);
+      modeEl.addEventListener('change', function () { prefillSize(); schedule(true); });
+      [scaleEl, widthEl, heightEl, qualityEl].forEach(function (el) {
+        el.addEventListener('input', function () { schedule(false); });
+        el.addEventListener('change', function () { schedule(true); });
+      });
+      [formatEl, bgEl, colorEl].forEach(function (el) { el.addEventListener('change', function () { schedule(true); }); });
+      colorEl.addEventListener('input', function () { schedule(false); });
       chips.forEach(function (c) {
-        c.addEventListener('click', function () { scaleEl.value = c.dataset.scale; schedule(); });
+        c.addEventListener('click', function () { scaleEl.value = c.dataset.scale; schedule(true); });
       });
 
       /* ── conversion ── */
@@ -1164,7 +1169,8 @@ const { tips: TIPS, ...CLIENT_T } = T;
         }).catch(function (e) { return { error: blockedError(e, a) }; });
       }
 
-      function run() {
+      function run(track) {
+        clearTimeout(timer);
         var gen = ++state.gen;
         var opts = readOptions();
         var items = state.items;
@@ -1172,7 +1178,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
         var i = 0;
         (function next() {
           if (gen !== state.gen) return;
-          if (i >= items.length) { finish(); return; }
+          if (i >= items.length) { finish(track, opts); return; }
           var item = items[i++];
           convertItem(item, opts).then(function (res) {
             if (gen !== state.gen) { if (res.url) URL.revokeObjectURL(res.url); return; }
@@ -1184,7 +1190,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
         })();
       }
 
-      function finish() {
+      function finish(track, opts) {
         var ok = state.items.filter(function (x) { return x.result && !x.result.error; });
         var names = uniqueNames(ok.map(function (x) { return x.result.fileName; }));
         ok.forEach(function (x, i) { x.result.fileName = names[i]; });
@@ -1194,7 +1200,9 @@ const { tips: TIPS, ...CLIENT_T } = T;
         if (state.items.length > 1) setStatus(fill(t.doneMany, { ok: ok.length, n: state.items.length }), ok.length ? 'success' : 'error');
         else if (item.result.error) setStatus(errorText(item.result.error), 'error');
         else setStatus(fill(t.doneOne, { name: item.name || 'SVG', file: item.result.fileName }), 'success');
-        if (ok.length) {
+        var resultKey = JSON.stringify([opts, ok.map(function (x) { return [x.text, x.result.width, x.result.height, x.result.blob.type]; })]);
+        if (track === true && ok.length && resultKey !== lastTrackedResult) {
+          lastTrackedResult = resultKey;
           window.trackTool && window.trackTool('svg-to-png-converter', 'convert');
         }
         resultEl.hidden = !ok.length && state.items.length === 1;
@@ -1297,6 +1305,9 @@ const { tips: TIPS, ...CLIENT_T } = T;
 
       /* ── input ── */
       function load(list, skipped) {
+        sourceRevision++;
+        state.gen++;
+        clearTimeout(timer);
         state.items.forEach(function (x) { if (x.result && x.result.url) URL.revokeObjectURL(x.result.url); });
         state.skipped = skipped || [];
         state.items = list.map(function (x) {
@@ -1311,12 +1322,15 @@ const { tips: TIPS, ...CLIENT_T } = T;
           setStatus(fill(t.note.skipped, { names: state.skipped.join(', ') }), 'error');
           return;
         }
-        run();
+        run(true);
       }
 
       function isSvgFile(f) { return /\.svg$/i.test(f.name) || f.type === 'image/svg+xml'; }
 
       function loadFiles(files) {
+        var revision = ++sourceRevision;
+        state.gen++;
+        clearTimeout(timer);
         var all = Array.prototype.slice.call(files || []);
         if (!all.length) return;
         var svgs = all.filter(isSvgFile);
@@ -1326,6 +1340,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
             return { name: f.name, text: '', readError: true };
           });
         })).then(function (list) {
+          if (revision !== sourceRevision) return;
           load(list, skipped);
         });
       }
@@ -1334,6 +1349,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
         loadFiles(fileInput.files);
         fileInput.value = '';
       });
+      codeInput.addEventListener('input', function () { sourceRevision++; state.gen++; clearTimeout(timer); });
       /* ── code:start ── */
       // An empty code box does not replace converted files with the "empty" error: Convert
       // (also ToolLayout's Ctrl/Cmd+Enter, which clicks it) then leaves their result alone.
@@ -1385,6 +1401,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
         if (!(e.metaKey || e.ctrlKey) || (e.key !== 'l' && e.key !== 'L')) return;
         if (!wrap.contains(document.activeElement)) return;
         state.gen++;
+        sourceRevision++;
         clearTimeout(timer);
         state.items.forEach(function (x) { if (x.result && x.result.url) URL.revokeObjectURL(x.result.url); });
         state.items = [];

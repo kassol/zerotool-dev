@@ -22,6 +22,7 @@
 // Run: node scripts/test-text-to-binary.mjs
 
 import { readFileSync } from 'node:fs';
+import { loadPage } from './astro-page-harness.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
@@ -243,7 +244,7 @@ if (stringsMatch) {
   check('Ctrl/Cmd+L clears the stale status', /key === 'l' \|\| e\.key === 'L'[\s\S]{0,200}if \(textEl\.value \|\| binEl\.value\) return;[\s\S]{0,80}setStatus\('', ''\);/.test(source));
   const layouts = readFileSync(new URL('../src/data/tool-layouts.ts', import.meta.url), 'utf8');
   check('Text → Binary has no button: it runs while you type and when the separator changes', !markup.includes('tb-to-binary') && !/toBinary/.test(source) &&
-    source.includes('textTimer = setTimeout(doTextToBinary, 150);') && source.includes('if (textEl.value) doTextToBinary();'));
+    source.includes('textTimer = setTimeout(doTextToBinary, 150);') && source.includes('if (textEl.value) doTextToBinary(true);'));
   check('listed as a convert page', layouts.includes("'text-to-binary': 'convert'"));
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const mdx = readFileSync(new URL(`../src/content/tools/text-to-binary/${lang}.mdx`, import.meta.url), 'utf8');
@@ -253,6 +254,27 @@ if (stringsMatch) {
     check(lang + ' mdx: no usage section in the body', !/^## (How to Use|使用方法|使い方|사용 방법)\s*$/m.test(body));
     check(lang + ' mdx: the limits section stays', /^## (Limits|限制|制限事項|제한 사항)\s*$/m.test(body));
   }
+}
+
+// S2-10g: exercise the complete production page at the established VM seam.
+{
+  const strings = new Function('return ' + stringsMatch[1])();
+  const tracks = [];
+  const p = loadPage('src/components/tools/TextToBinaryTool.astro', {
+    globals: { t: strings.en, TextEncoder, TextDecoder, trackTool: (...args) => tracks.push(args) },
+  });
+  eq('GA initial rendering silent', tracks, []);
+  p.el('tb-text').value = 'A'; p.el('tb-text').dispatch('input'); p.flush(150);
+  eq('GA typing still converts live', p.el('tb-binary').value, '01000001');
+  eq('GA typing silent', tracks, []);
+  p.el('tb-text').dispatch('change');
+  eq('GA committed encode historical name', tracks, [['text_to_binary', 'text_to_binary']]);
+  p.el('tb-text').dispatch('change');
+  eq('GA unchanged encode deduplicated', tracks.length, 1);
+  p.el('tb-to-text').click(); p.el('tb-to-text').click();
+  eq('GA manual decode success deduplicated', tracks, [['text_to_binary', 'text_to_binary'], ['text_to_binary', 'binary_to_text']]);
+  p.el('tb-binary').value = '2'; p.el('tb-to-text').click();
+  eq('GA invalid binary silent', tracks.length, 2);
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

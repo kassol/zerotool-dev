@@ -549,7 +549,7 @@ function makeCert({ version = 3, serial = [0x01], issuer, subject, nb = D.utc('2
 // ── 9. Real page entry points (browser APIs only are replaced) ──
 function pageFixture(lang = 'en', options = {}) {
   const elements = new Map(), listeners = new Map(), timers = new Map();
-  const saved = [], cleared = [], clipboard = [], scrolls = [];
+  const saved = [], cleared = [], clipboard = [], scrolls = [], tracks = [];
   const pendingCrypto = new Set();
   const pageSubtle = new Proxy(globalThis.crypto.subtle, { get(target, key) {
     const value = target[key];
@@ -596,14 +596,14 @@ function pageFixture(lang = 'en', options = {}) {
   const sandbox = { document, S: Object.fromEntries(Object.entries(STRINGS[lang]).filter(([key]) => key !== 'tips')), EX: EXAMPLES[lang],
     console, TextDecoder, TextEncoder, URL, Uint8Array, ArrayBuffer, atob, btoa, crypto: { subtle: pageSubtle },
     navigator: { clipboard: { writeText(text) { clipboard.push(text); return Promise.resolve(); } } },
-    innerHeight: 844,
+    innerHeight: 844, trackTool: (...args) => tracks.push(args),
     ztPersist: { load() { return options.saved || null; }, save(slug, text) { saved.push([slug, text]); }, clear(slug) { cleared.push(slug); } },
     setTimeout(fn, ms) { timers.set(++timerId, { fn, ms }); return timerId; }, clearTimeout(id) { timers.delete(id); },
   };
   sandbox.window = sandbox;
   vm.runInNewContext(source.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1], sandbox, { filename: 'SslCertificateDecoderTool.astro' });
   return {
-    get, saved, cleared, clipboard, scrolls,
+    get, saved, cleared, clipboard, scrolls, tracks,
     async settle() {
       for (let i = 0; i < 100; i++) {
         await new Promise(setImmediate);
@@ -733,6 +733,26 @@ for (const action of ['Clear', 'Ctrl+L']) {
   const file = pageFixture(); file.file(Promise.resolve(new TextEncoder().encode(privateBlock + EXAMPLES.en.pem).buffer)); await settlePage(file);
   check('file opening removes private keys before displaying input', file.get('scd-input').value === EXAMPLES.en.pem);
   check('file opening never saves private key text', file.saved.length === 1 && !file.saved[0][1].includes('PRIVATE KEY'));
+}
+
+// S2-10g: committed decode, restored input and obsolete asynchronous work.
+{
+  const same = (name, actual, expected) => check(name, JSON.stringify(actual) === JSON.stringify(expected), JSON.stringify(actual));
+  const p = pageFixture();
+  same('GA certificate initial render silent', p.tracks, []);
+  p.type(EXAMPLES.en.pem); p.flush(350); await p.settle();
+  check('GA live certificate decode preserved', !p.get('scd-results').hidden);
+  same('GA certificate typing silent', p.tracks, []);
+  p.get('scd-input').dispatch('change'); await p.settle();
+  same('GA committed decode historical name', p.tracks, [['ssl-certificate-decoder','decode']]);
+  p.get('scd-input').dispatch('change'); await p.settle();
+  same('GA identical certificate deduplicated', p.tracks.length, 1);
+  p.type('invalid'); p.get('scd-input').dispatch('change'); await p.settle();
+  same('GA invalid certificate silent', p.tracks.length, 1);
+  const restored = pageFixture('en', {saved:EXAMPLES.en.pem}); await restored.settle();
+  same('GA restored certificate silent', restored.tracks, []);
+  const stale = pageFixture(); stale.get('scd-example').click(); stale.type('new input'); await stale.settle();
+  same('GA obsolete certificate decode silent before debounce', stale.tracks, []);
 }
 
 // ── 11. v2 page layout and localized instructions ──

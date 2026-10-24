@@ -15,7 +15,7 @@ const STRINGS = {
     tips: {
       image: "Choose one image, drop it here, or paste a screenshot with Ctrl+V / ⌘V. The browser must support its format; take a screenshot of PDFs. zxing-wasm 3.1.4 (ZXing C++ in WebAssembly) loads from this site on first use (about 420 KB). It reads QR, Micro QR and rMQR, up to 16 codes per image, and scales images above 16,777,216 pixels.",
       url: "Enter an http:// or https:// image address and choose Decode or press Enter. The image server must allow CORS. The request sends no cookies or referrer; when it fails, save the image and drop it here.",
-      camera: "Scan with camera asks for permission and prefers the rear camera. Frames stay in this browser. Scanning stops on the first frame with a code; Stop camera, Clear or Ctrl/⌘+L also stops it. A browser with camera support and a secure page is required.",
+      camera: "Scan with camera asks for permission and prefers the rear camera. The tool decodes frames on this page without uploading them. Scanning stops on the first frame with a code; Stop camera, Clear or Ctrl/⌘+L also stops it. A browser with camera support and a secure page is required.",
       results: "Each code has its own card. With several codes, cards and preview share numbers ordered from top left. Read the type, decoded content and real host before opening a link. Copy exports text; Wi-Fi cards copy their fields. No link opens automatically.",
       encoding: "When a code has non-ASCII bytes without an ECI declaration, Text encoding lets you decode them again with another character set. Codes with ECI keep that declared encoding. Bytes shows the original data in hexadecimal.",
     },
@@ -25,7 +25,7 @@ const STRINGS = {
     dropAria: 'Choose an image with a QR code',
     camera: 'Scan with camera',
     cameraStop: 'Stop camera',
-    cameraHint: 'Point the camera at a QR code. The camera image stays in this browser.',
+    cameraHint: 'Point the camera at a QR code. The tool decodes camera frames on this page without uploading them.',
     urlLabel: 'Or decode an image from a URL',
     urlPlaceholder: 'https://example.com/qr.png',
     urlDecodeBtn: 'Decode',
@@ -845,6 +845,7 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
 
       /* ── Rendering ── */
       var current = null; // { canvas, results: [{ raw, charset }] }
+      var copyGeneration = 0;
 
       function el(tag, cls, text) {
         var e = document.createElement(tag);
@@ -854,13 +855,24 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
       }
       function copyButton(getText, action) {
         var b = el('button', 'btn-copy', t.copy);
+        var request = 0, timer;
         b.type = 'button';
         b.addEventListener('click', function () {
-          navigator.clipboard.writeText(getText()).then(function () {
-            b.textContent = t.copied; b.classList.add('copied');
-            setTimeout(function () { b.textContent = t.copy; b.classList.remove('copied'); }, 1500);
-          });
-          track(action);
+          var generation = copyGeneration, attempt = ++request;
+          clearTimeout(timer);
+          function active() { return generation === copyGeneration && attempt === request; }
+          try {
+            if (!navigator.clipboard || !navigator.clipboard.writeText) return;
+            navigator.clipboard.writeText(getText()).then(function () {
+              if (!active()) return;
+              b.textContent = t.copied; b.classList.add('copied');
+              track(action);
+              timer = setTimeout(function () {
+                if (!active()) return;
+                b.textContent = t.copy; b.classList.remove('copied');
+              }, 1500);
+            }, function () {});
+          } catch (e) {}
         });
         return b;
       }
@@ -959,6 +971,7 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
           CHARSETS.forEach(function (c) { var o = el('option', null, c[1]); o.value = c[0]; sel.appendChild(o); });
           sel.value = entry.charset || '';
           sel.addEventListener('change', function () {
+            copyGeneration++;
             entry.charset = sel.value || null;
             var fresh = renderCard(entry, index, total);
             card.replaceWith(fresh);
@@ -1003,6 +1016,7 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
       }
 
       function showResults(canvas, rawResults, scaledFrom) {
+        copyGeneration++;
         var sorted = sortResults(rawResults).map(function (r) { return { raw: r, charset: null }; });
         current = { canvas: canvas, results: sorted };
         resultsEl.textContent = '';
@@ -1044,6 +1058,7 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
 
       var busy = 0;
       function clearResults() {
+        copyGeneration++;
         current = null;
         resultsEl.textContent = '';
         resultArea.hidden = true;

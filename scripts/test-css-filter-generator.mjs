@@ -128,6 +128,37 @@ function open(s,lang='en',shellFirst=false){
   function change(h) {
     h.input('cfg-blur', 2.5); h.frames();
   }
+  const rangeErrors = {
+    en: 'Enter a value from {min} to {max}, in steps of {step}.',
+    zh: '请输入 {min}–{max} 范围内的值，步长为 {step}。',
+    ja: '{min}～{max} の範囲で、刻み幅 {step} の値を入力してください。',
+    ko: '{min}~{max} 범위에서 {step} 단위로 입력하세요.'
+  };
+  const bounds = { blur: [20, 0.1], brightness: [200, 1], contrast: [200, 1], grayscale: [100, 1], 'hue-rotate': [360, 1], invert: [100, 1], opacity: [100, 1], saturate: [200, 1], sepia: [100, 1] };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) for (const [key, [max, step]] of Object.entries(bounds)) {
+    const h = open(spec, lang), field = 'cfg-' + key;
+    const error = rangeErrors[lang].replace('{min}', '0').replace('{max}', String(max)).replace('{step}', String(step));
+    h.click(); const oldCopy = h.requests[0];
+    h.input('cfg-blur', '2.5'); // Leave a legitimate render queued before the invalid edit.
+    const saved = h.persist.saved.length;
+    for (const value of ['', '-1', String(max + 1), String(step / 2), '2oops', '1e309', '0x10']) {
+      h.input(field, value);
+      check(lang + '/' + key + '/' + value + ' invalid input clears output immediately', [h.el('cfg-code').textContent, h.el('cfg-copy').disabled, h.el('cfg-preview-img').hidden, h.el('cfg-preview-img').style.filter, h.el('cfg-status').textContent, h.el(field).value], ['', true, true, '', error, value]);
+      h.frames(true);
+      check(lang + ' queued frame cannot revive invalid filter', [h.el('cfg-code').textContent, h.el('cfg-copy').disabled, h.persist.saved.length], ['', true, saved]);
+      const count = h.requests.length; h.click();
+      check(lang + ' invalid filter cannot copy stale CSS', h.requests.length, count);
+    }
+    oldCopy.reject(Error('late failure')); await settle();
+    check(lang + ' old copy cannot replace range error', h.el('cfg-status').textContent, error);
+    for (const value of ['0', String(max), String(step)]) {
+      h.input(field, value); h.frames();
+      check(lang + ' valid filter recovers ' + value, [h.el('cfg-copy').disabled, h.el('cfg-preview-img').hidden, h.el('cfg-status').textContent, h.el(field + '-range').value], [false, false, '', value]);
+    }
+    h.input(field, '-1');
+    h.input(field + '-range', '0'); h.frames();
+    check(lang + ' valid slider recovers its number field', [h.el(field).value, h.el('cfg-copy').disabled], ['0', false]);
+  }
   const failedLabels = {en:'Copy failed',zh:'复制失败',ja:'コピーに失敗しました',ko:'복사 실패'};
   for (const lang of ['en','zh','ja','ko']) {
     for (const shellFirst of [false,true]) {

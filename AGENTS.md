@@ -5,7 +5,7 @@
 ## 项目概述
 
 ZeroTool（zerotool.dev）— 浏览器端开发者工具的多语言静态站（工具清单以 `src/data/tools.ts` 为准）。
-- 纯客户端运算，零账号，零数据上传
+- 以浏览器处理为主，零账号；联网工具逐页说明发送的信息与目标服务
 - 4 语言：en（默认）/ zh / ja / ko
 - 静态构建后部署在 Cloudflare Pages
 
@@ -171,7 +171,11 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 10. **工具 slug 重命名**：改 slug 必须同步——`src/data/tools.ts`、`src/data/icons.ts`、`src/components/tools/registry.ts`、`src/content/tools/{slug}/`，并在 `public/_redirects` 为 en + zh + ja + ko 旧路径加 301。若组件文件名也改名，需同步 registry 中的组件文件名。删除工具时 `_redirects` 仍保留指向最相关替代品，避免 404
 11. **工具样式隔离**：每个工具页只加载共享 CSS + 本工具 CSS。组件不得依赖其他工具组件的样式；类名用本工具独有的前缀（新前缀先 grep `src/components/tools/` 确认没有被占用）；多个工具共用的规则放 `src/styles/tool-common.css`。脚本里用 `innerHTML` / `createElement` 生成的元素没有 scoped 属性，给它们的规则要写成 `:global(...)`
 
+12. **公开处理与隐私说明**：按实际实现说明输入在哪里处理、是否上传、存储与清除方式、联网目标及统计动作；不用「数据永不离开浏览器」「完全クライアントサイド」「완전 브라우저 처리」一类绝对承诺。复制、下载、外部图片加载等行为的说明须与代码一致，草稿博客不进入公开文字巡检。
+
 ## 变更日志
+
+- 2026-10-24 — 完成 S2-10g / 10i / 10j 的实现集成，范围与验收见 `docs/2026-10-24-s2-closure.md`。盘点全部 141 个工具的事件名、动作与触发时机，保留 45 个历史别名；31 个工具修正自动输入、初始渲染或异步操作尚未成功就记使用的路径，相关四语隐私题同步。Regex / RSA 报错本地化、RSA 复制后备、HTTP Header 请求行与摘要、CSS 数字越界处理补齐。MDX 标注忽略代码内标题，增加 GFM 表格空行检查与普通零宽示例复算；共享读者仍可读取行内代码。公开文案检查扩充到四语数据位置承诺，FAQ 按真实 YAML 检查结构与数量，统一 About、组件、工具页、博客与 i18n 的处理和隐私说明。114 个受保护引擎区块保持逐字不变。日报采集修复与补档证据保留在仓库外的 metrics 目录。
 
 - 2026-10-18 — 补 3 条截断工具路径的 301（决策人已批准；日报 404 明细里的截断前缀：各 2 / 2 / 1 次，均无尾斜杠）：`/zh/tools/eyedropper`、`/zh/tools/zero-width`、`/tools/protobuf-to`。`public/_redirects` 末尾新增 1 行注释与 6 条规则（3 个前缀 × 带 / 不带尾斜杠两种形式，沿 STA-585 先例），分别指向 `/zh/tools/eyedropper-color-picker/`、`/zh/tools/zero-width-character-detector/`、`/tools/protobuf-to-json/`。其余 404（歧义 / 探测 / 拼接类）按批准范围不补；U+2011 变体与尾随标点由 404 页（`src/pages/404.astro`）的路径归一化兜底。audit 23 PASS、build 通过，随 v1.141.1 发布。
 

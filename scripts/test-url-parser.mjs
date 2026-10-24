@@ -584,7 +584,8 @@ check('pages carry up-check annotations', annotations >= 12, annotations);
       host: swap(u.host), hostname: swap(u.hostname), port: u.port, pathname: u.pathname, search: u.search, hash: u.hash };
   }
   function runPage(lang) {
-    const els = new Map();
+    const els = new Map(), tracks = [];
+    let timers = [], timerId = 0;
     const mk = (key) => {
       const listeners = {};
       const el = {
@@ -603,13 +604,30 @@ check('pages carry up-check annotations', annotations >= 12, annotations);
     const sandbox = {
       S: client, URL: ChromeLikeURL, TextEncoder, TextDecoder, console, Intl, JSON, Math, Array, Object, String, Number, RegExp, Error, Set, Map, Promise,
       encodeURIComponent, decodeURIComponent, parseInt, isNaN,
-      setTimeout: () => 0, clearTimeout() {},
+      trackTool: (...args) => tracks.push(args),
+      setTimeout(fn, ms) { timers.push({id: ++timerId, fn, ms}); return timerId; }, clearTimeout(id) { timers = timers.filter(t => t.id !== id); },
       navigator: { clipboard: { writeText: () => Promise.resolve() } },
       document: { getElementById: get, querySelectorAll: () => [], createElement: (t) => mk('<' + t + '>'), addEventListener() {}, body: mk('body'), activeElement: null, execCommand: () => false },
     };
     sandbox.window = sandbox;
     vm.runInNewContext(code, sandbox, { filename: 'UrlParserTool.astro' });
-    return { el: get, type(v) { get('up-input').value = v; get('up-input').dispatch('input'); } };
+    return { el: get, tracks, flush() { const ready = timers; timers = []; ready.forEach(t => t.fn()); }, type(v) { get('up-input').value = v; get('up-input').dispatch('input'); } };
+  }
+  {
+    const eq = (name, actual, expected) => check(name, JSON.stringify(actual) === JSON.stringify(expected), JSON.stringify(actual));
+    const p = runPage('en');
+    eq('GA URL initial rendering silent', p.tracks, []);
+    p.type('https://example.com/a?b=1'); p.flush();
+    eq('GA URL live parse preserved', p.el('up-href').textContent, 'https://example.com/a?b=1');
+    eq('GA URL typing silent', p.tracks, []);
+    p.el('up-input').dispatch('change'); p.flush();
+    eq('GA committed URL historical name', p.tracks, [['url-parser','parse']]);
+    p.el('up-input').dispatch('change'); p.flush();
+    eq('GA unchanged URL deduplicated', p.tracks.length, 1);
+    p.type('http://exa mple.com/'); p.el('up-input').dispatch('change'); p.flush();
+    eq('GA URL nonstandard host silent', p.tracks.length, 1);
+    p.type('https://example.com/b'); p.type('http://['); p.flush();
+    eq('GA URL obsolete valid parse silent', p.tracks.length, 1);
   }
   for (const lang of ['en', 'zh']) {
     const S = STRINGS[lang];

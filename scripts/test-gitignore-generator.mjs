@@ -42,7 +42,7 @@ function renderMarkup(lang='en') {
 }
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};}
 function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}){
-  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],downloads=[],urls=new Map(),scrollCalls=[];let stored=structuredClone(saved);
+  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],tracks=[],downloads=[],urls=new Map(),scrollCalls=[];let stored=structuredClone(saved);
   let timerId=0,clock=0,doc;
   const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
   const matchOne = (el, selector) => {
@@ -136,7 +136,7 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   doc.execCommand=command=>{execCalls.push(command);throw Error('Native clipboard prohibited');};
   const persist={clear(slug){if(slug!=='cron-job-generator')stored={};persistCalls.push(['clear',slug]);},save(slug,data){stored=JSON.parse(JSON.stringify(data));persistCalls.push(['save',slug,stored]);},load(){return structuredClone(stored);}};
   const globals={document:doc,Date:class extends Date{constructor(...a){super(...(a.length?a:['2026-10-05T08:00:00Z']));}static now(){return Date.parse('2026-10-05T08:00:00Z');}},Blob,crypto:webcrypto,URL:{createObjectURL(blob){const url='blob:probe-'+urls.size;urls.set(url,blob);return url;},revokeObjectURL(url){urls.delete(url);}},require(name){if(name==='../../data/gitignore-templates')return templates;throw Error('Unreviewed import '+name);},fetch(){throw Error('Network prohibited');},
-    _slug:SLUG,ztPersist:persist,trackTool(){},matchMedia(){return {matches:false};},
+    _slug:SLUG,ztPersist:persist,trackTool(...args){tracks.push(args);},matchMedia(){return {matches:false};},
     navigator:noClipboard?{}:{clipboard:{writeText(value){const d=deferred();clipboard.push({...d,value:String(value)});return d.promise;},write(){throw Error('Unexpected clipboard.write');}}},
     setTimeout(fn,ms){timers.set(++timerId,{fn,ms,due:clock+ms});return timerId;},clearTimeout(id){timers.delete(id);},
   };
@@ -145,12 +145,26 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   if(order==='shared-after')actual.run(shortcut);
   const get=id=>{const el=doc.getElementById(id);must(el,SLUG+' ID '+id);return el;};
   const errors=[];activePage={errors};
-  return{errors,doc,get,widget,clipboard,timers,persistCalls,execCalls,downloads,scrollCalls,stored:()=>structuredClone(stored),actual,
+  return{errors,doc,get,widget,clipboard,timers,persistCalls,execCalls,tracks,downloads,scrollCalls,stored:()=>structuredClone(stored),actual,
     input(id,value,event='input'){get(id).value=value;get(id).dispatch(event);},
     ctrlL(id,key='l',mod='ctrlKey'){const el=get(id);el.focus();el.dispatch('keydown',{key,[mod]:true});},
     choose(id,checked){get(id).checked=checked;get(id).dispatch('change');},
     tick(ms){clock+=ms;for(;;){const ready=[...timers].filter(([,t])=>t.due<=clock).sort((a,b)=>a[1].due-b[1].due)[0];if(!ready)break;timers.delete(ready[0]);ready[1].fn();}},
   };
+}
+
+// S2-10g: clipboard success is the boundary for the historical copy action.
+{
+  const p = ready();
+  const copies = () => p.tracks.filter(args => args[1] === 'copy');
+  p.get('gig-copy').click(); assert('GA copy pending silent', copies(), []);
+  p.clipboard[0].reject(Error('controlled failure')); await settle();
+  assert('GA rejected clipboard silent', copies(), []);
+  p.get('gig-copy').click(); p.clipboard[1].resolve(); await settle();
+  assert('GA successful clipboard historical name', copies(), [['gitignore-generator','copy']]);
+  p.get('gig-copy').click(); p.input('gig-custom', 'fresh');
+  p.clipboard[2].resolve(); await settle();
+  assert('GA obsolete clipboard success silent', copies().length, 1);
 }
 
 const LABELS={en:{copy:'Copy',copied:'Copied!',failed:'Copy failed',download:'Download'},zh:{copy:'复制',copied:'已复制！',failed:'复制失败',download:'下载'},ja:{copy:'コピー',copied:'コピー済み！',failed:'コピーに失敗しました',download:'ダウンロード'},ko:{copy:'복사',copied:'복사됨!',failed:'복사 실패',download:'다운로드'}};
