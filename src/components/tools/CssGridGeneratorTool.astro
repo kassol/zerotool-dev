@@ -7,6 +7,7 @@ const { lang = 'en' } = Astro.props;
 // strings:start
 const STRINGS = {
   en: {
+    invalidRange: "Enter whole column and row counts from 1–12 and 1–8 respectively.",
     columns: 'Columns',
     rows: 'Rows',
     columnGap: 'Column Gap',
@@ -23,6 +24,7 @@ const STRINGS = {
     tips: {"columns": "Set 1–12 columns. Changing the count rebuilds the cells and replaces the column template with repeat(N, 1fr).", "rows": "Set 1–8 rows. Changing the count rebuilds the cells and replaces the row template with repeat(N, 1fr).", "columnGap": "Enter a CSS length such as 24px, 1.5rem or 2%. An empty field uses 1rem; typed values are copied without validation.", "rowGap": "Set the row spacing. The preview gap writes the row gap before the column gap. An empty field uses 1rem.", "templateColumns": "Enter a custom column template after setting the count. Gap changes retain it; changing Columns replaces it. The preview always contains Columns × Rows cells.", "templateRows": "Enter a custom row template after setting the count. Gap changes retain it; changing Rows replaces it. Templates are copied as typed.", "copy": "Copy the complete .container rule with its five declarations. Ctrl/⌘+L clears text, CSS and preview while keeping counts. Retry a failed copy or select the CSS manually."},
   },
   zh: {
+    invalidRange: "列数须为 1–12 的整数，行数须为 1–8 的整数。",
     columns: '列数',
     rows: '行数',
     columnGap: '列间距',
@@ -39,6 +41,7 @@ const STRINGS = {
     tips: {"columns": "设置 1–12 列。修改列数会重建单元格，并将列模板改为 repeat(N, 1fr)。", "rows": "设置 1–8 行。修改行数会重建单元格，并将行模板改为 repeat(N, 1fr)。", "columnGap": "输入 24px、1.5rem 或 2% 等 CSS 长度。空值使用 1rem；输入值不经校验，按原样复制。", "rowGap": "设置行间距。预览的 gap 先写行间距，再写列间距。空值使用 1rem。", "templateColumns": "先设置列数，再输入自定义列模板。修改间距会保留模板，修改列数会替换它。预览始终绘制列数×行数个单元格。", "templateRows": "先设置行数，再输入自定义行模板。修改间距会保留模板，修改行数会替换它。模板按输入原样复制。", "copy": "复制含五条声明的完整 .container 规则。Ctrl/⌘+L 清空文本、CSS 和预览，保留数量。复制失败时可重试或手动选中 CSS。"},
   },
   ja: {
+    invalidRange: "列数は 1～12、行数は 1～8 の整数で入力してください。",
     columns: '列数',
     rows: '行数',
     columnGap: '列ギャップ',
@@ -55,6 +58,7 @@ const STRINGS = {
     tips: {"columns": "列数を1〜12に設定します。変更するとセルを再作成し、列テンプレートを repeat(N, 1fr) に置き換えます。", "rows": "行数を1〜8に設定します。変更するとセルを再作成し、行テンプレートを repeat(N, 1fr) に置き換えます。", "columnGap": "24px、1.5rem、2% などの CSS 長さを入力します。空欄は1remになり、入力値は検証せずそのままコピーします。", "rowGap": "行間を設定します。プレビューの gap は行間、列間の順で書かれます。空欄は1remになります。", "templateColumns": "列数を設定してからカスタム列テンプレートを入力します。ギャップ変更では保持し、列数変更では置き換えます。セル数は常に列数×行数です。", "templateRows": "行数を設定してからカスタム行テンプレートを入力します。ギャップ変更では保持し、行数変更では置き換えます。入力どおりにコピーします。", "copy": "5宣言を含む完全な .container ルールをコピーします。Ctrl/⌘+L はテキスト、CSS、プレビューを消去し、数量を保持します。失敗したら再試行するか CSS を選択してください。"},
   },
   ko: {
+    invalidRange: "열 수는 1~12, 행 수는 1~8의 정수로 입력하세요.",
     columns: '열 수',
     rows: '행 수',
     columnGap: '열 간격',
@@ -78,6 +82,7 @@ const L = STRINGS[lang] ?? STRINGS.en;
 
 <div
   class="cgg-wrap"
+  data-invalid-range={L.invalidRange}
   data-copy={L.copy}
   data-copied={L.copied}
   data-copy-failed={L.copyFailed}
@@ -164,9 +169,21 @@ const L = STRINGS[lang] ?? STRINGS.en;
       }
       /* ── engine:end ── */
 
+      function readCount(el, max) {
+        var raw = el.value.trim(), n = Number(raw);
+        return /^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(raw) && Number.isInteger(n) && n >= 1 && n <= max ? n : null;
+      }
+
       function update() {
-        var cols    = Math.max(1, Math.min(12, parseInt(colsEl.value) || 3));
-        var rows    = Math.max(1, Math.min(8,  parseInt(rowsEl.value) || 2));
+        var cols = readCount(colsEl, 12);
+        var rows = readCount(rowsEl, 8);
+        if (cols === null || rows === null) {
+          codeEl.innerHTML = '';
+          previewEl.innerHTML = '';
+          statusEl.textContent = wrap.dataset.invalidRange;
+          statusEl.className = 'tool-status error';
+          return false;
+        }
         var colGap  = colGapEl.value.trim()   || '1rem';
         var rowGap  = rowGapEl.value.trim()   || '1rem';
 
@@ -215,10 +232,17 @@ const L = STRINGS[lang] ?? STRINGS.en;
         copyBtn.textContent = COPY_LABEL;
         copyBtn.classList.remove('copied');
         statusEl.textContent = '';
+        statusEl.className = 'tool-status';
       }
       function refresh(event) {
         resetCopyFeedback();
-        update();
+        if (update() === false) {
+          copyBtn.disabled = true;
+          previewEl.hidden = true;
+          resultEl.dataset.empty = 'true';
+          emptyEl.hidden = true;
+          return;
+        }
         copyBtn.disabled = !codeEl.textContent;
         resultEl.dataset.empty = 'false';
         emptyEl.hidden = true;

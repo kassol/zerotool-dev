@@ -65,7 +65,7 @@ function makeEl(id) {
   const node = {
     id, value: '', textContent: '', className: '', style: {}, dataset: {}, children: [], classList: { remove() {} },
     get innerHTML() { return html; },
-    set innerHTML(v) { html = v; this.textContent = v.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&'); },
+    set innerHTML(v) { html = v; this.textContent = v.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&'); if (v === '') this.children = []; },
     get lastChild() { return this.children[this.children.length - 1]; },
     appendChild(c) { this.children.push(c); return c; },
     removeChild(c) { this.children.splice(this.children.indexOf(c), 1); return c; },
@@ -112,7 +112,7 @@ function generate(c) {
   return el('cfg-code').textContent;
 }
 generate({ items: 9 });
-check('items are capped at 8', el('cfg-preview').children.length === 8);
+check('invalid item count clears the preview', el('cfg-preview').children.length === 0);
 generate({ items: 2 });
 check('items can go down to 2', el('cfg-preview').children.length === 2);
 
@@ -256,13 +256,30 @@ function open(s,lang='en',order='component-first'){
 
 function assertEq(name,actual,expected){check(name,JSON.stringify(actual)===JSON.stringify(expected),JSON.stringify({actual,expected}));}
 function changePage(h){h.input(spec.input,spec.slug==='css-variables-generator'?'brand':'24px');}
+const rangeErrors = { en: 'Enter a whole item count from 1 to 8.', zh: '项目数须为 1–8 的整数。', ja: 'アイテム数は 1～8 の整数で入力してください。', ko: '항목 수는 1~8의 정수로 입력하세요.' };
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const h = open(spec, lang);
+  h.click(); const oldCopy = h.requests[0];
+  for (const value of ['', '0', '-1', '9', '1.5', '1e309', '2oops', '0x2']) {
+    h.input('cfg-items', value);
+    assertEq(lang + '/' + value + ' rejects invalid item count', [h.el(spec.output).textContent, h.el(spec.copy).disabled, h.el(spec.preview).children.length, h.el(spec.preview).hidden, h.el(spec.status).textContent, h.el('cfg-items').value], ['', true, 0, true, rangeErrors[lang], value]);
+    const before = h.requests.length; h.click();
+    assertEq(lang + ' invalid count cannot copy stale CSS', h.requests.length, before);
+  }
+  oldCopy.reject(Error('Late clipboard failure')); await settle();
+  assertEq(lang + ' invalid count ignores earlier copy failure', h.el(spec.status).textContent, rangeErrors[lang]);
+  for (const value of ['1', '8', '2e0']) {
+    h.input('cfg-items', value);
+    assertEq(lang + ' valid item count recovers ' + value, [h.el(spec.copy).disabled, h.el(spec.preview).children.length, h.el(spec.preview).hidden, h.el(spec.status).textContent], [false, Number(value), false, '']);
+  }
+}
 for(const lang of ['en','zh','ja','ko'])for(const order of ['component-first','shared-first']){
   const name=lang+' '+order+' ';let h=open(spec,lang,order);
 
   assertEq(name+'actual default four preview cells',h.el('cfg-preview').children.length,4);
   for(const dir of ['column','column-reverse','row-reverse','row']){h.input('cfg-direction',dir,'change');assertEq(name+'direction '+dir,[h.el('cfg-preview').style.flexDirection,h.el(spec.output).textContent.includes('flex-direction: '+dir+';')],[dir,true]);}
   h.input('cfg-wrap','wrap','change');h.input('cfg-justify','space-between','change');assertEq(name+'wrap/justify survive existing select behavior',[h.el('cfg-preview').style.flexWrap,h.el('cfg-preview').style.justifyContent],['wrap','space-between']);
-  h.input('cfg-items',99);assertEq(name+'items clamp to8',h.el('cfg-preview').children.length,8);h.input('cfg-items',1);assertEq(name+'items can reduce to1',h.el('cfg-preview').children.length,1);
+  h.input('cfg-items',99);assertEq(name+'invalid item count clears preview',h.el('cfg-preview').children.length,0);h.input('cfg-items',1);assertEq(name+'items can reduce to1',h.el('cfg-preview').children.length,1);
 
   changePage(h);const original=h.state();
   h.key('Enter');assertEq(name+'CtrlEnter keeps the independent Copy path',h.state(),original);
@@ -327,7 +344,7 @@ active=null;process.removeListener('unhandledRejection',unhandled);
   const hashes={"en": "92ff9e64c488c2028f61e99d37299cb129c9bde46c3297a6216234e8324e73c0", "zh": "42cd799f787f2aaa343b8e22ad77e64dde6ac940f0ea67899961462b2d25c47b", "ja": "60a07281a34314d536be44bb67ba5dbb2b80f47acb5c2b64dce117f54ab3783f", "ko": "631abfeefc57f3a296fa7b5817fa89686af1190fcfb96ec5f0690e0dc4643265"},reference={"en": {"steps": 8, "maxStepChars": 107, "totalStepChars": 603}, "zh": {"steps": 8, "maxStepChars": 52, "totalStepChars": 236}, "ja": {"steps": 8, "maxStepChars": 73, "totalStepChars": 308}, "ko": {"steps": 8, "maxStepChars": 71, "totalStepChars": 326}};
   const digest=text=>createHash('sha256').update(text).digest('hex');
   for(const lang of ['en','zh','ja','ko']){
-    const h=open(spec,lang);const old=Object.fromEntries(Object.entries(h.L).filter(([key])=>!['editor','removeLabel','options','empty','tips'].includes(key)).sort(([a],[b])=>a.localeCompare(b)));
+    const h=open(spec,lang);const old=Object.fromEntries(Object.entries(h.L).filter(([key])=>!['invalidRange','editor','removeLabel','options','empty','tips'].includes(key)).sort(([a],[b])=>a.localeCompare(b)));
     assertEq(lang+' old localized values stay exact',digest(JSON.stringify(old)),hashes[lang]);
     const mdx=readFileSync(join(root,'src/content/tools/css-flexbox-generator/'+lang+'.mdx'),'utf8'),fm=mdx.match(/^---\n([\s\S]*?)\n---/),front=fm[1];
     const section=front.slice(front.indexOf('\nsteps:\n'),front.indexOf('\nfaqItems:'));

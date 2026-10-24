@@ -7,6 +7,7 @@ const { lang = 'en' } = Astro.props;
 // strings:start
 const STRINGS = {
   en: {
+    invalidRange: "Enter a whole item count from 1 to 8.",
     direction: 'flex-direction',
     wrap: 'flex-wrap',
     justifyContent: 'justify-content',
@@ -24,6 +25,7 @@ const STRINGS = {
     tips: {"direction": "Choose row, row-reverse, column or column-reverse. The preview and CSS update immediately.", "wrap": "Choose nowrap, wrap or wrap-reverse to control whether items form additional lines.", "justifyContent": "Choose how items share space along the main axis set by flex-direction. The initial selection is normal.", "alignItems": "Choose the item alignment on the cross axis. The initial selection is normal. This sets the container property, not individual items.", "alignContent": "Choose how wrapped lines align on the cross axis. This property has no effect with nowrap. The initial selection is normal.", "gap": "Enter a CSS gap. One value sets both gaps; two values are row gap then column gap. Empty uses 1rem, and values are copied without validation.", "itemCount": "Set 1–8 preview items. This changes the number of boxes; the exported rule contains container properties only.", "copy": "Copy the complete .container rule with seven declarations. Ctrl/⌘+L clears the gap text, CSS and preview while keeping selects and item count. Retry a failed copy or select the CSS manually."},
   },
   zh: {
+    invalidRange: "项目数须为 1–8 的整数。",
     direction: 'flex-direction',
     wrap: 'flex-wrap',
     justifyContent: 'justify-content',
@@ -41,6 +43,7 @@ const STRINGS = {
     tips: {"direction": "选择 row、row-reverse、column 或 column-reverse，预览和 CSS 会立即更新。", "wrap": "选择 nowrap、wrap 或 wrap-reverse，控制子项是否形成多行。", "justifyContent": "选择子项沿 flex-direction 所定义主轴的空间分配方式。初始选项为 normal。", "alignItems": "选择子项沿交叉轴的对齐方式。初始选项为 normal，设置的是容器属性。", "alignContent": "选择换行后的各行沿交叉轴的对齐方式。nowrap 时不生效。初始选项为 normal。", "gap": "输入 CSS 间距。一个值设置两个方向，两个值依次为行间距、列间距。空值使用 1rem，输入值不经校验。", "itemCount": "设置 1–8 个预览子项。这会改变方框数量；导出的规则只包含容器属性。", "copy": "复制含七条声明的完整 .container 规则。Ctrl/⌘+L 清空间距文本、CSS 和预览，保留下拉选项及子项数量。失败时可重试或手动选中 CSS。"},
   },
   ja: {
+    invalidRange: "アイテム数は 1～8 の整数で入力してください。",
     direction: 'flex-direction',
     wrap: 'flex-wrap',
     justifyContent: 'justify-content',
@@ -58,6 +61,7 @@ const STRINGS = {
     tips: {"direction": "row、row-reverse、column、column-reverse を選択します。プレビューと CSS が即座に更新されます。", "wrap": "nowrap、wrap、wrap-reverse を選び、アイテムが複数行になるか設定します。", "justifyContent": "flex-direction で定まる主軸上のスペース配分を選びます。初期選択は normal です。", "alignItems": "交差軸上のアイテム配置を選びます。初期選択は normal で、コンテナのプロパティを設定します。", "alignContent": "折り返した行の交差軸上の配置を選びます。nowrap では効果がありません。初期選択は normal です。", "gap": "CSS のギャップを入力します。1値は両方向、2値は行間・列間の順です。空欄は1remになり、入力値は検証しません。", "itemCount": "プレビューのアイテム数を1〜8に設定します。ボックス数が変わり、出力はコンテナのプロパティのみです。", "copy": "7宣言の完全な .container ルールをコピーします。Ctrl/⌘+L はギャップ、CSS、プレビューを消去し、選択と個数を保持します。失敗したら再試行するか CSS を選択してください。"},
   },
   ko: {
+    invalidRange: "항목 수는 1~8의 정수로 입력하세요.",
     direction: 'flex-direction',
     wrap: 'flex-wrap',
     justifyContent: 'justify-content',
@@ -82,6 +86,7 @@ const L = STRINGS[lang] ?? STRINGS.en;
 
 <div
   class="cfg-wrap"
+  data-invalid-range={L.invalidRange}
   data-copy={L.copy}
   data-copied={L.copied}
   data-copy-failed={L.copyFailed}
@@ -209,7 +214,14 @@ const L = STRINGS[lang] ?? STRINGS.en;
         var alignItems = aItemsEl.value;
         var alignCont  = aContEl.value;
         var gap        = gapEl.value.trim() || '1rem';
-        var count      = Math.max(1, Math.min(8, parseInt(itemsEl.value) || 4));
+        var raw = itemsEl.value.trim(), count = Number(raw);
+        if (!/^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(raw) || !Number.isInteger(count) || count < 1 || count > 8) {
+          codeEl.innerHTML = '';
+          previewEl.innerHTML = '';
+          statusEl.textContent = wrap.dataset.invalidRange;
+          statusEl.className = 'tool-status error';
+          return false;
+        }
 
         /* Update preview */
         previewEl.style.display        = 'flex';
@@ -256,10 +268,17 @@ const L = STRINGS[lang] ?? STRINGS.en;
         copyBtn.textContent = COPY_LABEL;
         copyBtn.classList.remove('copied');
         statusEl.textContent = '';
+        statusEl.className = 'tool-status';
       }
       function refresh(event) {
         resetCopyFeedback();
-        update();
+        if (update() === false) {
+          copyBtn.disabled = true;
+          previewEl.hidden = true;
+          resultEl.dataset.empty = 'true';
+          emptyEl.hidden = true;
+          return;
+        }
         copyBtn.disabled = !codeEl.textContent;
         resultEl.dataset.empty = 'false';
         emptyEl.hidden = true;

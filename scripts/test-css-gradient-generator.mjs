@@ -145,6 +145,40 @@ function open(s,lang='en',shellFirst=false){
     // Even partial text input invalidates old feedback while preserving ordinary parse behavior.
     {h=open(spec,lang);h.click(); const text=h.query('.cgg-stop-hex');text.value='#';text.dispatch('input');const before=h.state();h.requests[0].resolve();await settle();check(lang+' partial input invalidates copy',h.state(),before);}
   }
+    const rangeErrors = { en: 'Enter whole angles from 0 to 360 and stop positions from 0 to 100.', zh: '角度须为 0–360 的整数，色标位置须为 0–100 的整数。', ja: '角度は 0～360、カラーストップの位置は 0～100 の整数で入力してください。', ko: '각도는 0~360, 색상 지점 위치는 0~100의 정수로 입력하세요.' };
+    for (const lang of ['en', 'zh', 'ja', 'ko']) {
+      for (const control of ['angle', 'conic', 'stop']) {
+        const p = open(spec, lang);
+        if (control === 'conic') p.query('.cgg-tab[data-type="conic"]').click();
+        const field = control === 'stop' ? p.query('.cgg-stop-pos') : p.el(control === 'angle' ? 'cgg-angle' : 'cgg-conic-from');
+        p.click(); const old = p.requests[0];
+        for (const value of ['', '-1', control === 'stop' ? '101' : '361', '1.5', '2oops', '1e309', '0x10']) {
+          field.value = value; field.dispatch('input');
+          check(lang + '/' + control + '/' + value + ' rejects invalid bounds', [p.el('cgg-code').textContent, p.el('cgg-copy').disabled, p.el('cgg-preview').hidden, p.el('cgg-preview').style.background, p.el('cgg-status').textContent, field.value], ['', true, true, '', rangeErrors[lang], value]);
+          const count = p.requests.length; p.click();
+          check(lang + ' invalid gradient cannot copy stale CSS', p.requests.length, count);
+        }
+        old.resolve(); await settle();
+        check(lang + ' invalid gradient ignores old copy feedback', p.el('cgg-status').textContent, rangeErrors[lang]);
+        for (const value of ['0', control === 'stop' ? '100' : '360', '1e2']) {
+          field.value = value; field.dispatch('input');
+          check(lang + ' valid gradient recovers ' + value, [p.el('cgg-copy').disabled, p.el('cgg-preview').hidden, p.el('cgg-status').textContent], [false, false, '']);
+          check(lang + ' exponent is passed to native generator as a number', p.el('cgg-code').textContent.includes(control === 'stop' ? ' ' + Number(value) + '%' : (control === 'conic' ? 'from ' : '(') + Number(value) + 'deg'), true);
+        }
+      }
+      const p = open(spec, lang);
+      p.input('cgg-angle', '-1');
+      p.query('.cgg-tab[data-type="radial"]').click();
+      check(lang + ' hidden invalid angle does not block radial generation', p.el('cgg-copy').disabled, false);
+      p.query('.cgg-tab[data-type="linear"]').click();
+      check(lang + ' returning to invalid angle clears the radial result', p.el('cgg-copy').disabled, true);
+      p.el('cgg-angle-range').value = '0'; p.el('cgg-angle-range').dispatch('input');
+      check(lang + ' slider fixes number field and output', [p.el('cgg-angle').value, p.el('cgg-copy').disabled, p.el('cgg-code').textContent.includes('linear-gradient(0deg,')], ['0', false, true]);
+      const positions = p.all('.cgg-stop-pos');
+      positions[0].value = '1e2'; positions[0].dispatch('input');
+      positions[1].value = '50'; positions[1].dispatch('input'); positions[1].dispatch('change');
+      check(lang + ' numeric stop order respects valid exponent input', p.all('.cgg-stop-pos').map(el => el.value), ['50', '1e2']);
+    }
     const h=open(spec);h.query('.cgg-dir-btn[data-deg="0"]').click();check('real zero-angle path',h.el('cgg-preview').style.background.startsWith('linear-gradient(0deg,'),true);
     h.query('.cgg-tab[data-type="radial"]').click();check('real radial path',h.el('cgg-preview').style.background.startsWith('radial-gradient('),true);h.query('.cgg-tab[data-type="conic"]').click();check('real conic zero path',h.el('cgg-preview').style.background.startsWith('conic-gradient(from 0deg'),true);
     // Full-width input from a CJK IME is read through NFKC, as in the color palette generator.

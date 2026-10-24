@@ -7,6 +7,7 @@ const { lang = 'en' } = Astro.props;
 // strings:start
 const STRINGS = {
   en: {
+    invalidRange: "Enter a value from {min} to {max}, in steps of {step}.",
     blur: 'Blur',
     brightness: 'Brightness',
     contrast: 'Contrast',
@@ -49,6 +50,7 @@ const STRINGS = {
     },
   },
   zh: {
+    invalidRange: "请输入 {min}–{max} 范围内的值，步长为 {step}。",
     blur: '模糊',
     brightness: '亮度',
     contrast: '对比度',
@@ -91,6 +93,7 @@ const STRINGS = {
     },
   },
   ja: {
+    invalidRange: "{min}～{max} の範囲で、刻み幅 {step} の値を入力してください。",
     blur: 'ぼかし',
     brightness: '明るさ',
     contrast: 'コントラスト',
@@ -133,6 +136,7 @@ const STRINGS = {
     },
   },
   ko: {
+    invalidRange: "{min}~{max} 범위에서 {step} 단위로 입력하세요.",
     blur: '흐림',
     brightness: '밝기',
     contrast: '대비',
@@ -184,6 +188,7 @@ const DEFAULT_PREVIEW = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000
 
 <div
   class="cfg-wrap"
+  data-invalid-range={L.invalidRange}
   data-copy={L.copy}
   data-copied={L.copied}
   data-copy-failed={L.copyFailed}
@@ -492,8 +497,30 @@ const DEFAULT_PREVIEW = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000
         rafPending = false;
       }
 
+      function readField(key, value) {
+        var d = DEFAULTS[key], raw = String(value).trim(), n = Number(raw);
+        var steps = (n - d.min) / d.step;
+        return /^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(raw) && Number.isFinite(n) && n >= d.min && n <= d.max && Math.abs(steps - Math.round(steps)) < 1e-8 ? n : null;
+      }
+
+      function invalidField() {
+        var first = null;
+        Object.keys(DEFAULTS).forEach(function (key) {
+          var el = wrap.querySelector('#cfg-' + key);
+          var bad = readField(key, el.value) === null;
+          el.setAttribute('aria-invalid', String(bad));
+          if (bad && first === null) first = key;
+        });
+        return first;
+      }
+
       function scheduleUpdate() {
         invalidateCopy();
+        if (invalidField() !== null) {
+          invalidateFrame();
+          renderResult();
+          return;
+        }
         if (rafPending) return;
         rafPending = true;
         var revision = frameRevision;
@@ -508,6 +535,17 @@ const DEFAULT_PREVIEW = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000
 
       function renderResult() {
         invalidateCopy();
+        var bad = invalidField();
+        if (bad !== null) {
+          var bounds = DEFAULTS[bad];
+          wrap.querySelector('#cfg-code').textContent = '';
+          previewImg.hidden = true;
+          previewImg.style.filter = '';
+          copyBtn.disabled = true;
+          wrap.dataset.empty = 'true';
+          setStatus(wrap.dataset.invalidRange.replace('{min}', bounds.min).replace('{max}', bounds.max).replace('{step}', bounds.step), 'error');
+          return;
+        }
         if (!previewImg.getAttribute('src')) previewImg.src = DEFAULT_SRC;
         previewImg.hidden = false;
         copyBtn.disabled = false;
@@ -541,7 +579,12 @@ const DEFAULT_PREVIEW = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000
         var numEl   = wrap.querySelector('#cfg-' + key);
 
         function setVal(v) {
-          v = clampValue(key, v);
+          v = readField(key, v);
+          if (v === null) {
+            invalidateFrame();
+            renderResult();
+            return;
+          }
           state[key] = v;
           rangeEl.value = v;
           numEl.value   = v;
