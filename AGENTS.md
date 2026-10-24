@@ -5,7 +5,7 @@
 ## 项目概述
 
 ZeroTool（zerotool.dev）— 浏览器端开发者工具的多语言静态站（工具清单以 `src/data/tools.ts` 为准）。
-- 纯客户端运算，零账号，零数据上传
+- 以浏览器处理为主，零账号；联网工具逐页说明发送的信息与目标服务
 - 4 语言：en（默认）/ zh / ja / ko
 - 静态构建后部署在 Cloudflare Pages
 
@@ -170,6 +170,8 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 9. **AGENTS.md 体系**：新增子目录前先建对应 AGENTS.md 定义职责；约定调整先改文档再改代码
 10. **工具 slug 重命名**：改 slug 必须同步——`src/data/tools.ts`、`src/data/icons.ts`、`src/components/tools/registry.ts`、`src/content/tools/{slug}/`，并在 `public/_redirects` 为 en + zh + ja + ko 旧路径加 301。若组件文件名也改名，需同步 registry 中的组件文件名。删除工具时 `_redirects` 仍保留指向最相关替代品，避免 404
 11. **工具样式隔离**：每个工具页只加载共享 CSS + 本工具 CSS。组件不得依赖其他工具组件的样式；类名用本工具独有的前缀（新前缀先 grep `src/components/tools/` 确认没有被占用）；多个工具共用的规则放 `src/styles/tool-common.css`。脚本里用 `innerHTML` / `createElement` 生成的元素没有 scoped 属性，给它们的规则要写成 `:global(...)`
+
+12. **公开处理与隐私说明**：按实际实现说明输入在哪里处理、是否上传、存储与清除方式、联网目标及统计动作；不用「数据永不离开浏览器」「完全クライアントサイド」「완전 브라우저 처리」一类绝对承诺。复制、下载、外部图片加载等行为的说明须与代码一致，草稿博客不进入公开文字巡检。
 
 ## 变更日志
 
