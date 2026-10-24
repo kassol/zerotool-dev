@@ -363,6 +363,19 @@ const settlePage = () => new Promise(resolve => setImmediate(resolve));
 const unhandledCopies = [];
 function recordUnhandled(error) { unhandledCopies.push(String(error?.message || error)); }
 process.on('unhandledRejection', recordUnhandled);
+// S2-10g: pending, failed and obsolete clipboard work must not count.
+{
+  const same = (name, actual, expected) => check(name, JSON.stringify(actual) === JSON.stringify(expected), JSON.stringify(actual));
+  const p = page({ preset: '# Heading' });
+  p.copy.click(); same('GA pending HTML copy silent', p.tracks, []);
+  p.requests[0].reject(Error('controlled clipboard failure')); await settlePage();
+  same('GA failed HTML copy silent', p.tracks, []);
+  p.copy.click(); p.requests[1].resolve(); await settlePage();
+  same('GA successful HTML copy historical name', p.tracks, [['markdown_preview','copy_html']]);
+  p.copy.click(); p.type('# New heading'); p.requests[2].resolve(); await settlePage();
+  same('GA obsolete HTML copy silent', p.tracks.length, 1);
+}
+
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const early = page({ lang, preset: '# Typed early' });
   eq(lang + ' early input remains', early.editor.value, '# Typed early');
@@ -480,7 +493,7 @@ const cssSource = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const engineExact = source.match(/^    \/\* ── engine:start ── \*\/[\s\S]*?^    \/\* ── engine:end ── \*\//m)[0];
 eq('v2 engine inclusive bytes unchanged', Buffer.byteLength(engineExact), 309);
 eq('v2 engine exact SHA256 unchanged', sha(engineExact), '62ccfe2402400e7dbaa4f62674ee75e1929b9a516c49ad4e88f483f72efb43a8');
-eq('v2 runtime excluding i18n migration remains byte exact', sha(clientScript.replace("    var t = JSON.parse(document.querySelector('.mp-wrap').dataset.strings);\n\n", '')), '37c944c7e32b4f195f36ef703228cc7847d4491f9a5177fd96dbe416a56b98b3');
+eq('S2-10g runtime baseline with clipboard-success tracking', sha(clientScript.replace("    var t = JSON.parse(document.querySelector('.mp-wrap').dataset.strings);\n\n", '')), 'f0ca21374bd9dbf1d38feecae67aaa376d61167198690de8e335d5589d55e3ba');
 eq('v2 original English sample remains byte exact', sha(source.match(/editor.value = \[([\s\S]*?)\]\.join/)[1]), 'ed859ff4a01b5ac0dd535eb650b3f4c3257594b1bce5c6051a66fd4828ab8fde');
 eq('v2 original prose content styling remains byte exact', sha(source.slice(source.indexOf('  /* Prose styles'), source.indexOf('  @media (prefers-color-scheme: dark)'))), '14cdada07a24993afdfbc7a998593516f318c71dce8c8e88b176bc3b55c44924');
 check('v2 direct tool root', /^\s*<div class="mp-wrap"/.test(markup));

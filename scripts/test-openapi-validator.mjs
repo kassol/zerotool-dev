@@ -34,6 +34,7 @@ import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { build } from 'esbuild';
 import vm from 'node:vm';
+import { loadPage } from './astro-page-harness.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(import.meta.url);
@@ -679,6 +680,43 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     check(lang + ': no duplicate usage section', !/<h2>(?:How to use|使用步骤|使い方|사용 방법)<\/h2>/i.test(body));
     check(lang + ': limitations remain in the article', /<h2>(?:Limits|限制|制限|제한)<\/h2>/.test(body));
   }
+}
+
+// S2-10g: real page and bundled production validation, controlled Worker delivery.
+{
+  const jobs = [], tracks = [];
+  class QueueWorker {
+    postMessage(message) { jobs.push({worker:this,message}); }
+    terminate() {}
+  }
+  const valid = 'openapi: 3.0.3\ninfo: {title: Test, version: "1"}\npaths: {}';
+  const p = loadPage('src/components/tools/OpenapiValidatorTool.astro', {
+    dataset:{'oav-wrap':{strings:JSON.stringify(T),example:valid}},
+    globals:{ performance, trackTool:(...args) => tracks.push(args),
+      require: name => name.endsWith('?worker') ? QueueWorker : require(name.startsWith('.') ? join(root,'src/components/tools',name) : name),
+    },
+  });
+  p.ctx.document.createDocumentFragment = () => p.ctx.document.createElement('fragment');
+  const settle = () => new Promise(setImmediate);
+  const reply = (job, error) => job.worker.onmessage({data:{id:job.message.id,...(error ? {error} : runtime.OAV.runValidation(job.message.input))}});
+  eq('GA validator initial render silent', tracks, []);
+  p.type('oav-input',valid); reply(jobs.at(-1)); await settle();
+  check('GA automatic validation still renders', !p.el('oav-results').hidden);
+  eq('GA validator typing silent', tracks, []);
+  p.el('oav-input').dispatch('change'); p.flush();
+  eq('GA validator committed request waits', tracks, []);
+  reply(jobs.at(-1)); await settle();
+  eq('GA committed validation historical success', tracks, [['openapi-validator','validate_success']]);
+  p.el('oav-validate').click(); reply(jobs.at(-1)); await settle();
+  eq('GA repeated validation deduplicated', tracks.length, 1);
+  p.el('oav-input').value = 'openapi: ['; p.el('oav-input').dispatch('change'); p.flush(); reply(jobs.at(-1)); await settle();
+  eq('GA completed error validation preserves action', tracks.at(-1), ['openapi-validator','validate_error']);
+  const n = tracks.length;
+  p.el('oav-validate').click(); const old = jobs.at(-1);
+  p.el('oav-input').value = valid; p.el('oav-input').dispatch('input');
+  reply(old); await settle(); eq('GA obsolete validation silent before debounce', tracks.length, n);
+  p.el('oav-input').dispatch('change'); p.flush(); reply(jobs.at(-1),'controlled worker failure'); await settle();
+  eq('GA validation infrastructure failure silent', tracks.length, n);
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

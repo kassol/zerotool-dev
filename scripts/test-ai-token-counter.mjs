@@ -583,6 +583,60 @@ const URL_HOOK = 'data:text/javascript,' + encodeURIComponent(`export async func
   }
 }
 
+// S2-10g: real page/client protocol, controlled Worker completion.
+{
+  const realRequire = createRequire(join(root, 'package.json'));
+  const jobs = [], tracks = [];
+  class QueueWorker {
+    postMessage(message) { if (message.type === 'count') jobs.push({ worker:this, message }); }
+    terminate() {}
+  }
+  const p = loadPage('src/components/tools/AiTokenCounterTool.astro', {
+    dataset: { '.atc-wrap': { lang:'en', strings:JSON.stringify(STRINGS.en), sample:'Hello!' } },
+    globals: {
+      TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, URL, requestIdleCallback:() => 0, addEventListener() {},
+      trackTool: (...args) => tracks.push(args),
+      require: name => name.endsWith('?worker') ? QueueWorker : realRequire(name.startsWith('.') ? join(root, 'src/components/tools', name) : name),
+    },
+  });
+  const same = (name, value, expected) => check(name, JSON.stringify(value) === JSON.stringify(expected), JSON.stringify(value));
+  const settle = () => new Promise(setImmediate);
+  const reply = (job, failed = false) => job.worker.onmessage({ data: { id:job.message.id, type:'result', result: {
+    results: failed ? {} : { o200k:{count:2,tokens:[]} }, failed:failed ? {o200k:'controlled failure'} : {},
+    stats:{chars:6,bytes:6,words:1,lines:1}, ms:1,
+  } } });
+  same('GA token initial render silent', tracks, []);
+  p.type('atc-input', 'Hello!'); reply(jobs.at(-1)); await settle();
+  check('GA live count still renders', p.el('atc-status').textContent.includes('o200k_base'));
+  same('GA token typing silent', tracks, []);
+  p.el('atc-input').dispatch('change'); p.flush();
+  same('GA committed count waits for success', tracks, []);
+  reply(jobs.at(-1)); await settle();
+  same('GA successful count historical name', tracks, [['ai-token-counter','count']]);
+  p.el('atc-input').dispatch('change'); p.flush(); reply(jobs.at(-1)); await settle();
+  same('GA unchanged count deduplicated', tracks.length, 1);
+  p.el('atc-input').dispatch('change'); p.flush(); const obsolete = jobs.at(-1);
+  p.type('atc-input', 'new text'); reply(obsolete); await settle();
+  same('GA obsolete count silent', tracks.length, 1);
+  p.el('atc-input').dispatch('change'); p.flush(); reply(jobs.at(-1), true); await settle();
+  same('GA failed tokenizer silent', tracks.length, 1);
+  p.el('atc-sample').click(); p.flush();
+  same('GA sample waits for count success', tracks.length, 1);
+  reply(jobs.at(-1)); await settle();
+  same('GA successful sample historical action', tracks.at(-1), ['ai-token-counter','sample']);
+  const copies = [], copyEvents = () => tracks.filter(args => args[1] === 'copy-stats');
+  p.ctx.navigator.clipboard.writeText = () => new Promise((resolve,reject) => copies.push({resolve,reject}));
+  p.el('atc-copy').click(); same('GA stats copy pending silent', copyEvents(), []);
+  copies[0].reject(Error('controlled clipboard failure')); await settle();
+  same('GA stats copy rejection silent', copyEvents(), []);
+  p.el('atc-copy').click(); copies[1].resolve(); await settle();
+  same('GA stats copy historical success', copyEvents(), [['ai-token-counter','copy-stats']]);
+  p.el('atc-copy').click(); p.type('atc-input','fresh edit'); copies[2].resolve(); await settle();
+  same('GA stats obsolete copy silent', copyEvents().length, 1);
+  same('GA fresh input resets stale copy feedback', p.el('atc-copy').textContent, STRINGS.en.copyStats);
+
+}
+
 // ── v2 page layout (DESIGN.md "Tool Pages v2", kind: analyze) ──────────────────
 {
   const markup = source.replace(/^---\n[\s\S]*?\n---/, '').split('<script>')[0].trim();

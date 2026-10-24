@@ -178,7 +178,7 @@ function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{reso
 const unhandled=[];process.on('unhandledRejection',error=>unhandled.push(String(error)));
 function page(lang='en',order='shared-after',clipboardMode='normal',savedMode=null){
   const key='mime',slugs={mime:'mime-type-lookup'},paths={mime:'src/components/tools/MimeTypeLookupTool.astro'};
-  const clipboard=[],timers=new Map(),readers=[],persistCalls=[],execCalls=[];
+  const clipboard=[],timers=new Map(),readers=[],persistCalls=[],execCalls=[],tracks=[];
   let timerId=0,clock=0,doc;
   const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
   const matchOne = (el, selector) => {
@@ -273,7 +273,7 @@ function page(lang='en',order='shared-after',clipboardMode='normal',savedMode=nu
     abort(){this.aborted=true;}
   }
   const globals={document:doc,File,FileReader:Reader,Uint8Array,ArrayBuffer,TextEncoder,TextDecoder,Blob,
-    _slug:slugs[key],ztPersist:persist,trackTool(){},t:Object.fromEntries(Object.entries(LOCALES[lang]).filter(([key])=>key!=='tips')),
+    _slug:slugs[key],ztPersist:persist,trackTool(...args){tracks.push(args);},t:Object.fromEntries(Object.entries(LOCALES[lang]).filter(([key])=>key!=='tips')),
     navigator:clipboardMode==='absent'?{}:{clipboard:{writeText(value){if(clipboardMode==='throw')throw Error('Controlled clipboard throw');const d=deferred();clipboard.push({...d,value:String(value)});return d.promise;},write(){throw Error('Unexpected clipboard.write');}}},
     setTimeout(fn,ms){timers.set(++timerId,{fn,ms,due:clock+ms});return timerId;},clearTimeout(id){timers.delete(id);},
   };
@@ -281,7 +281,7 @@ function page(lang='en',order='shared-after',clipboardMode='normal',savedMode=nu
   const actual=loadPage(paths[key],{lang,globals});
   if(order==='shared-after')actual.run(shortcut);
   const get=id=>{const el=doc.getElementById(id);must(el,key+' ID '+id);return el;};
-  return{doc,get,widget,clipboard,readers,timers,persistCalls,execCalls,
+  return{doc,get,widget,clipboard,readers,timers,persistCalls,execCalls,tracks,
     input(id,value){get(id).value=value;get(id).dispatch('input');},
     ctrlL(el=get('mtl-search'),key='l',mod='ctrlKey'){el.focus();const e=new EventStub('keydown',{bubbles:true,key,[mod]:true});el.dispatchEvent(e);return e;},
     choose(files){get('mtl-file').value=files.length?'fakepath/'+files[0].name:'';get('mtl-file').files=files;get('mtl-file').dispatch('change');},
@@ -300,6 +300,23 @@ async function prepared(lang,order,mode='sniff',api='normal'){
   const p=page(lang,order,api);if(mode==='search')p.input('mtl-search','.png');else{p.get('mtl-tab-sniff').click();p.choose([PNG]);await p.readers.at(-1).finish();}return p;
 }
 const button=(p,mode)=>mode==='search'?p.get('mtl-results').querySelector('.mtl-copy'):sniffButton(p);
+// S2-10g: committed successful catalog searches only.
+{
+  const p = page();
+  eq('GA catalog initial render silent', p.tracks, []);
+  p.input('mtl-search', '.png');
+  check('GA catalog still updates live', p.get('mtl-results').textContent.includes('image/png'));
+  eq('GA search typing silent', p.tracks, []);
+  p.get('mtl-search').dispatch('change');
+  eq('GA committed search historical name', p.tracks, [['mime-type-lookup', 'search']]);
+  p.get('mtl-search').dispatch('change');
+  eq('GA same search deduplicated', p.tracks.length, 1);
+  p.input('mtl-search', 'no-such-mime'); p.get('mtl-search').dispatch('change');
+  eq('GA unsuccessful search silent', p.tracks.length, 1);
+  p.input('mtl-search', '.jpg'); p.get('mtl-search').dispatch('change');
+  eq('GA different successful search counted', p.tracks.length, 2);
+}
+
 const pagePass=passes,pageFail=failures;
 for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','shared-after']){
   const name=lang+'/'+order;let p=page(lang,order);
@@ -361,7 +378,7 @@ for(const [name,begin,end,expected] of [
 // v2 page layout — compiled CSS, real SSR text and page controls; browser geometry is separate.
 const v2Pass=passes,v2Fail=failures;
 const frozen={
-  "scriptHash": "e41610c910b4d235cbb3b5bd343c3d665f8906860fd889d2531c40a0d9dfb97a",
+  "scriptHash": "79e7816cc2e99deb48f17e6b35643f95cf89bd7cafecefe5f97a794bf82301f7",
   "oldKeys": [
     "tabSearch",
     "tabSniff",
@@ -396,10 +413,10 @@ const frozen={
     "none"
   ],
   "oldStringHashes": {
-    "en": "bdf05f256f3b4b037cb264ed5f808ea19ac90f7c8d5216ffb98e25187957151c",
-    "zh": "35afae64d25ddf4e19b0e0682a5eea90273e0d8a6412c56d6477a8f53335dd77",
-    "ja": "4af7ff135a6385b9cfc7cc2b95c7c4a776250b8a6a111d14ec51996a2f0450db",
-    "ko": "980122e0e8328ed4440990f3c3047a0d76a0b4f75104dc118d73698f6f03230f"
+    "en": "b3e5f32e626a6a61fd2f7e3d7043190c768c2fd5480542fa55857d233f44d210",
+    "zh": "6321bbbb57fe72862b41c8e06fce87e2605e57ab077d303101f9e9fe3f90a209",
+    "ja": "1ecb3f4f6f61d99eb8025d4122d5a5a9987825e4eb9a19b3d77e3e1929093a50",
+    "ko": "3319a5d74075018a48bdfd267896132357ca6cbe5814a7e8da4235d88e3bf25b"
   }
 };
 const hash=value=>createHash('sha256').update(value).digest('hex');
@@ -429,7 +446,7 @@ const placeholders=value=>(String(value).match(/\{\w+\}/g)||[]).sort();
 for(const lang of ['en','zh','ja','ko']){
   const T=LOCALES[lang],{tips,...client}=T,p=page(lang),about=JSON.parse(readFileSync(join(root,'src/i18n/'+lang+'.json'),'utf8'))['tool.tipAbout'];
   eq('v2 '+lang+' same locale keys',Object.keys(T).sort(),Object.keys(LOCALES.en).sort());
-  eq('v2 '+lang+' prior strings exact',hash(JSON.stringify(Object.fromEntries(frozen.oldKeys.map(k=>[k,T[k]])))),frozen.oldStringHashes[lang]);
+  eq('v2 '+lang+' strings baseline with precise file-read claim',hash(JSON.stringify(Object.fromEntries(frozen.oldKeys.map(k=>[k,T[k]])))),frozen.oldStringHashes[lang]);
   eq('v2 '+lang+' same tip keys',Object.keys(tips),Object.keys(LOCALES.en.tips));
   for(const key of Object.keys(tips)){
     check('v2 '+lang+' plain nonempty tip '+key,typeof tips[key]==='string'&&tips[key].trim()&&!/[<>\n]|https?:/.test(tips[key]));
@@ -458,7 +475,7 @@ for(const lang of ['en','zh','ja','ko']){
   eq('v2 '+lang+' MDX content contract', contractProblems('mime-type-lookup', lang), '');
   let error='';try{await compileMdx(content.replace(/^---[\s\S]*?---\s*/,''));}catch(e){error=String(e);}eq('v2 '+lang+' MDX compiles',error,'');
 }
-eq('v2 entire client script after old i18n exact',hash(src.slice(src.indexOf('      // Curated MIME database'),src.indexOf('<style is:global>'))),frozen.scriptHash);
+eq('S2-10g client baseline with committed-search tracking',hash(src.slice(src.indexOf('      // Curated MIME database'),src.indexOf('<style is:global>'))),frozen.scriptHash);
 check('v2 registry analyze',/'mime-type-lookup':\s*'analyze'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
 console.log(`v2 page layout: ${passes-v2Pass} passed, ${failures-v2Fail} failed`);
 
