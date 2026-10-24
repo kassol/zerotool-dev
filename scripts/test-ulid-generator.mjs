@@ -414,6 +414,24 @@ async function generateReady(p) { p.get(lifecyclePrefix + '-generate').click(); 
 function emptyState(p) {     return !p.get(lifecyclePrefix + '-tbody').children.length && p.get(lifecyclePrefix + '-results').style.display === 'none' && (((!p.get('ulid-decode-input').value && !p.get('ulid-decode-result').textContent && p.get('ulid-decode-result').style.display === 'none'))); }
 const controlIds = ['ulid-count'];
 const settings = p => JSON.stringify(controlIds.map(id => [id, p.get(id).value, !!p.get(id).checked]));
+// S2-10g extension: the decoder remains live while usage follows successful commits.
+{
+    const p = lifecyclePage();
+    const events = () => p.tracks.filter(args => args[1] === 'decode');
+    const ulid = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
+    p.input('ulid-decode-input', ulid);
+    check('GA ULID decoder still renders live', p.get('ulid-decode-result').textContent.includes('1469922850259'));
+    eq('GA ULID typing silent', events(), []);
+    p.change('ulid-decode-input', ulid);
+    eq('GA ULID committed historical action', events(), [['ulid-generator','decode']]);
+    p.change('ulid-decode-input', ulid.toLowerCase());
+    eq('GA ULID equivalent input deduplicated', events().length, 1);
+    p.change('ulid-decode-input', 'INVALID');
+    eq('GA ULID invalid commit silent', events().length, 1);
+    p.change('ulid-decode-input', '01ARZ3NDEMTSV4RRFFQ69G5FAV');
+    eq('GA ULID next valid commit counted', events().length, 2);
+}
+
 for (const lang of ['en', 'zh', 'ja', 'ko'])
     for (const order of ['shared-before', 'shared-after'])
         await attempt(lang + '/' + order, async () => {

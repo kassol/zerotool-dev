@@ -647,7 +647,7 @@ print(json.dumps(res))
   check('no innerHTML in the page script', !/innerHTML|insertAdjacentHTML|outerHTML/.test(script));
   check('no network calls', !/fetch\(|XMLHttpRequest|sendBeacon/.test(script));
   check('no direct storage access (ztPersist only)', !/localStorage|sessionStorage|document\.cookie/.test(script));
-  check('GA event is debounced, not sent per keystroke', /trackTimer = setTimeout/.test(script) && !/addEventListener\('input', function \(\) \{[^}]*trackTool/.test(script));
+  // Usage timing is exercised through the complete page events below.
   const persistence = readFileSync(join(root, 'src/data/persistence.ts'), 'utf8');
   check('persistence policy is preference', /'number-base': 'preference'/.test(persistence));
 }
@@ -665,8 +665,8 @@ print(json.dumps(res))
   const resultBases = new Function('return ' + source.match(/const resultBases = (.*?);/)[1].replace(/\bas const\b/g, '') + ';')();
   const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 
-  function page(shellFirst = false) {
-    const ids = new Map(), copies = [], timers = new Map(), documentEvents = {}, clears = [];
+  function page(shellFirst = false, preset = '') {
+    const ids = new Map(), copies = [], timers = new Map(), documentEvents = {}, clears = [], tracks = [];
     let timerId = 0, now = 0;
     const document = { activeElement: null };
     function simpleMatch(el, selector) {
@@ -771,7 +771,7 @@ print(json.dumps(res))
       }
     });
     const context = {
-      document, t: CLIENT_T, isSecureContext: true,
+      document, t: CLIENT_T, isSecureContext: true, trackTool: (...args) => tracks.push(args),
       navigator: { clipboard: { writeText(value) {
         let resolve, reject;
         const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -781,6 +781,7 @@ print(json.dumps(res))
       clearTimeout: id => timers.delete(id),
       ztPersist: { load: () => ({}), save() {}, clear: slug => clears.push(slug) }, _slug: 'number-base'
     };
+    get('nb-input').value = preset;
     context.window = context;
     vm.createContext(context);
     if (shellFirst) vm.runInContext(shortcut, context);
@@ -807,7 +808,24 @@ print(json.dumps(res))
       (focusInside ? get('nb-input') : body).focus();
       return document.dispatch('keydown', { ctrlKey: true, key: 'l' });
     }
-    return { get, input, copy, button, snapshot, ctrlL, tick, clears };
+    return { get, input, copy, button, snapshot, ctrlL, tick, clears, tracks };
+  }
+
+  // S2-10g extension: successful committed conversions, never live typing or boot.
+  {
+    const p = page(); p.input('255'); p.tick(1500);
+    eq('GA Number Base live result retained', p.snapshot().outputs[0], '255');
+    eq('GA Number Base typing silent', p.tracks, []);
+    p.get('nb-input').dispatch('change'); p.tick(1500);
+    eq('GA Number Base committed historical event', p.tracks, [['number_base','convert']]);
+    p.get('nb-input').dispatch('change'); p.tick(1500);
+    eq('GA Number Base unchanged result deduplicated', p.tracks.length, 1);
+    p.get('nb-base').value = '16'; p.get('nb-base').dispatch('change'); p.tick(1500);
+    eq('GA Number Base successful changed interpretation counted', p.tracks.length, 2);
+    p.input('bad!'); p.get('nb-input').dispatch('change'); p.tick(1500);
+    eq('GA Number Base failed commit silent', p.tracks.length, 2);
+    const restored = page(false, '255'); restored.tick(1500);
+    eq('GA Number Base browser-restored input silent', restored.tracks, []);
   }
 
   for (const outcome of ['resolve', 'reject']) {
