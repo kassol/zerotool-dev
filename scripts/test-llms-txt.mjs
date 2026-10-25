@@ -9,7 +9,7 @@
 // Covers: plain-text and frontmatter steps rules and limits; file structure per
 // llmstxt.org (H1, blockquote, notes without headings, H2 file lists of `[name](url)`
 // items); every zerotool.dev URL in the built files is in the sitemap (or is one of the
-// llms files), every tool URL's slug is in tools.ts, and every tool in tools.ts is listed
+// fixed resource files from agentResources), every tool URL's slug is in tools.ts, and every tool in tools.ts is listed
 // in each file; tools in network.ts carry their network note and no "stays offline"
 // wording (for example "100% client-side"); the old hand-written files in public/ are gone.
 //
@@ -25,6 +25,7 @@ import { z } from 'zod';
 import {
   plainText, toolSteps, buildLlmsTxt, buildLlmsFullTxt, toolUrl, llmsUrl,
   MAX_STEPS, MAX_STEP_CHARS, MAX_HOWTO_CHARS, CATEGORY_ORDER, LLMS_LANGS, SITE,
+  agentResources,
 } from '../src/data/llms.mjs';
 import { parseToolsSource } from './generate-og.mjs';
 
@@ -96,6 +97,7 @@ check('toolSteps keeps whole steps within MAX_HOWTO_CHARS', wideSteps.length ===
 const tr = (name, description) => ({ en: { name, description }, zh: { name: name + '-zh', description: description + '（中）' }, ja: { name: name + '-ja', description }, ko: { name: name + '-ko', description } });
 const messagesFor = (lang) => ({
   'footer.tagline': `tagline-${lang}`,
+  ...Object.fromEntries(['Index', 'Categories', 'About'].map((key) => [`footer.resource${key}`, `${key}-${lang}`])),
   ...Object.fromEntries(CATEGORY_ORDER.map((c) => [`category.${c}`, `${c}-${lang}`])),
   'network.net-tool': `sends-${lang}`,
   'networkOptional.opt-tool': `option-${lang}`,
@@ -198,7 +200,10 @@ if (missing.length) {
     for (const m of readFileSync(join(dist, f), 'utf-8').matchAll(/<loc>([^<]+)<\/loc>/g)) sitemapUrls.add(m[1]);
   }
   check('sitemap read', sitemapUrls.size > slugs.size, `${sitemapUrls.size} URLs`);
-  const llmsFileUrls = new Set([...LLMS_LANGS.map(llmsUrl), `${SITE}/llms-full.txt`]);
+  const resourceUrls = new Set(LLMS_LANGS.flatMap((lang) => agentResources(lang).map(({ href }) => SITE + href)));
+  for (const url of resourceUrls) {
+    check(`linked resource exists: ${url}`, existsSync(join(dist, new URL(url).pathname)));
+  }
 
   const texts = Object.fromEntries(Object.entries(files).map(([k, f]) => [k, readFileSync(f, 'utf-8')]));
 
@@ -220,8 +225,8 @@ if (missing.length) {
     }
 
     const urls = [...text.matchAll(/https:\/\/zerotool\.dev(\/[A-Za-z0-9._~/{}-]*)?/g)].map((m) => m[1] ? m[0] : m[0] + '/');
-    const unknown = [...new Set(urls)].filter((u) => !sitemapUrls.has(u) && !llmsFileUrls.has(u) && !u.includes('{slug}'));
-    check(`${key}: every zerotool.dev URL is in the sitemap or is an llms file`, unknown.length === 0, unknown.slice(0, 5).join(' '));
+    const unknown = [...new Set(urls)].filter((u) => !sitemapUrls.has(u) && !resourceUrls.has(u) && !u.includes('{slug}'));
+    check(`${key}: every zerotool.dev URL is in the sitemap or is a known resource`, unknown.length === 0, unknown.slice(0, 5).join(' '));
     const toolSlugsInFile = [...text.matchAll(/https:\/\/zerotool\.dev\/(?:(?:zh|ja|ko)\/)?tools\/([^/\s)]+)\//g)].map((m) => m[1]).filter((s) => s !== '{slug}');
     const notInTools = [...new Set(toolSlugsInFile)].filter((s) => !slugs.has(s));
     check(`${key}: every tool URL slug is in tools.ts`, notInTools.length === 0, notInTools.join(' '));

@@ -2,6 +2,8 @@
 import SEO from '../components/SEO.astro';
 import { t } from '../i18n/utils';
 import { disabledPersistenceSlugs } from '../data/persistence';
+import { agentResources } from '../data/llms.mjs';
+import { aiLinks } from '../data/agents.mjs';
 import { getCollection } from 'astro:content';
 import { partytownSnippet } from '@qwik.dev/partytown/integration';
 
@@ -69,6 +71,8 @@ if (isBlogPost) {
 
 const langNames: Record<string, string> = { en: 'English', zh: '中文', ja: '日本語', ko: '한국어' };
 const currentLangName = langNames[lang] ?? 'English';
+const footerResources = agentResources(lang);
+const footerAssistants = aiLinks(lang);
 
 // Language switch hrefs
 const getLangHref = (targetLang: string) => {
@@ -315,6 +319,54 @@ const getLangHref = (targetLang: string) => {
     </main>
 
     <footer class="site-footer">
+      <section class="footer-agents" aria-labelledby="footer-agents-title">
+        <h2 id="footer-agents-title">{t(lang, 'footer.agents')}</h2>
+        <nav class="footer-resources" aria-labelledby="footer-agents-title">
+          {footerResources.map((resource) => (
+            <a
+              href={resource.href}
+              hreflang={resource.lang}
+              title={t(lang, resource.descriptionKey)}
+              aria-label={`${resource.name} — ${t(lang, resource.descriptionKey)}`}
+            >{resource.name}</a>
+          ))}
+        </nav>
+        <div class="footer-ai">
+          <div class="footer-ai-copy">
+            <p id="footer-ai-title">{t(lang, 'footer.askAi')}</p>
+            <p class="footer-ai-hint">{t(lang, 'footer.aiHint')}</p>
+          </div>
+          <nav class="footer-assistants" aria-labelledby="footer-ai-title">
+            {footerAssistants.map((assistant) => (
+              <a
+                class="footer-ai-link"
+                data-ai-provider={assistant.id}
+                href={assistant.href}
+                target="_blank"
+                rel="noopener noreferrer external"
+                referrerpolicy="no-referrer"
+                data-astro-prefetch="false"
+                aria-label={t(lang, 'footer.askProvider').replace('{provider}', assistant.name)}
+                title={t(lang, 'footer.askProvider').replace('{provider}', assistant.name)}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill={assistant.stroke ? 'none' : 'currentColor'}
+                  stroke={assistant.stroke ? 'currentColor' : 'none'}
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                  set:html={assistant.icon}
+                />
+              </a>
+            ))}
+          </nav>
+        </div>
+      </section>
       <div class="footer-links">
         <a href={aboutBase}>{t(lang, 'nav.about')}</a>
         <a href={privacyBase}>{t(lang, 'nav.privacy')}</a>
@@ -787,13 +839,84 @@ const getLangHref = (targetLang: string) => {
   .site-footer {
     border-top: 1px solid var(--color-border-light);
     text-align: center;
-    padding: 1.35rem 1rem;
+    padding: 1.75rem 1.25rem 1.35rem;
     font-size: 0.85rem;
-    color: var(--color-text-muted);
+    color: var(--color-text-secondary);
     background: color-mix(in oklch, var(--color-bg) 86%, var(--color-bg-secondary));
   }
 
-  .site-footer a { color: var(--color-text-muted); }
+  .site-footer a { color: var(--color-text-secondary); }
+
+  .footer-agents {
+    max-width: 1180px;
+    margin: 0 auto 1.25rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--color-border-light);
+    text-align: left;
+  }
+
+  .footer-agents h2 {
+    margin: 0 0 0.4rem;
+    font-family: var(--font-display);
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--color-text);
+  }
+
+  .footer-resources {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.15rem 1.25rem;
+    margin-bottom: 1.4rem;
+  }
+
+  .footer-resources a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    text-underline-offset: 0.2em;
+  }
+
+  .footer-ai {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem 2rem;
+  }
+
+  .footer-ai-copy { min-width: 0; }
+
+  .footer-ai-copy p { margin: 0; }
+
+  #footer-ai-title {
+    font-weight: 600;
+    color: var(--color-text);
+  }
+
+  .footer-ai-copy .footer-ai-hint {
+    max-width: 70ch;
+    margin-top: 0.2rem;
+    font-size: 0.82rem;
+  }
+
+  .footer-assistants {
+    display: flex;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+    gap: 0.5rem;
+  }
+
+  .footer-ai-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    transition: color var(--transition-fast), background var(--transition-fast);
+  }
 
   .footer-links {
     display: flex;
@@ -804,16 +927,33 @@ const getLangHref = (targetLang: string) => {
   }
 
   .footer-links a {
-    color: var(--color-text-muted);
+    color: var(--color-text-secondary);
     font-size: 0.82rem;
     transition: color var(--transition-fast);
   }
 
   @media (hover: hover) {
-    .footer-links a:hover {
+    .footer-links a:hover,
+    .footer-resources a:hover {
       color: var(--color-primary);
-      text-decoration: none;
+      text-decoration: underline;
     }
+
+    .footer-ai-link:hover {
+      color: var(--color-primary);
+      background: var(--color-primary-light);
+    }
+  }
+
+  @media (max-width: 640px) {
+    .footer-ai {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .footer-resources { gap: 0 1.1rem; }
+    .footer-resources a { min-height: 44px; }
+    .footer-links a { display: inline-flex; align-items: center; min-height: 44px; }
   }
 
   /* ── Prose pages (About, Privacy, Terms, Contact) ── */

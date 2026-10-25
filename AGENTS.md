@@ -59,6 +59,7 @@ ZeroTool（zerotool.dev）— 浏览器端开发者工具的多语言静态站�
 |-----------|------|----------|
 | `_redirects` | CF Pages 301 规则（旧链接→新链接） | 高：错一行影响 SEO 与外链可达性 |
 | `_routes.json` | CF Pages Functions 路由白名单/黑名单 | 高：误配会让所有请求走 Functions，增加冷启动延迟 |
+| `_headers` | 静态 Markdown 资料的 `Content-Type`（`text/markdown; charset=utf-8`） | 中：须在 Pages 本地预览与部署后核对 |
 | `ads.txt` | AdSense 出版商声明（IAB 标准） | 中：内容必须与 AdSense dashboard 注册一致，否则广告停投 |
 | `robots.txt` | 爬虫规则 + sitemap 指引 | 中：误 disallow 会让 Google 停止索引 |
 | `favicon.svg` | 站点图标 | 低 |
@@ -68,6 +69,7 @@ ZeroTool（zerotool.dev）— 浏览器端开发者工具的多语言静态站�
 | `vendor/` | 第三方静态资源（如 wasm、字体） | 中 |
 | `images/` | 工具页正文引用的手工图片（文件名带连字符，落在 `_routes.json` 的 `/*-*` 排除内）。`nato-phonetic-alphabet-ja.png` 由 `scripts/generate-nato-chart.mjs` 生成后提交 | 低 |
 | （不在 `public/`）`/llms.txt`、`/{zh,ja,ko}/llms.txt`、`/llms-full.txt` | 给 AI 助手的站点摘要（llmstxt.org 格式）。由 Astro 端点 `src/pages/llms.txt.ts`、`src/pages/{zh,ja,ko}/llms.txt.ts`、`src/pages/llms-full.txt.ts` 在 build 时生成，内容规则在 `src/data/llms.mjs`，数据取自 `tools.ts`、`network.ts`、`persistence.ts`、i18n 与工具页 mdx。不要在 `public/` 放同名文件（`test-llms-txt.mjs` 检查） | 中：AI 助手按它介绍站点，说法须与 About、`network.ts` 一致 |
+| （不在 `public/`）`/{index,categories,about}.md` 及四语版本 | 页脚 AI 助手资料，由现有 pages 目录的 `[document].md.ts` 与 `llms.mjs` 构建。只生成三种固定文档名，复用注册表与处理说明；根目录三条路径须排除 Functions | 中：修改后跑 `test-agent-footer.mjs`、`test-llms-txt.mjs`，范围见 `docs/2026-10-25-agent-footer.md` |
 | `cb742ae5a7b4c3ed945013823039558f.txt` | IndexNow 密钥文件，内容就是密钥本身（无换行），密钥与 `scripts/indexnow-urls.mjs` 的 `INDEXNOW_KEY` 一致。协议设计上密钥公开（搜索引擎靠抓取它确认站点所有权），直接进仓库。须以 200 + `text/plain` 返回：已加入 `_routes.json` 的 `exclude`（名字不含连字符，`/*-*` 覆盖不到），`_redirects` 没有规则匹配它，均由 `scripts/test-indexnow-urls.mjs` 校验 | 中：改名或删除会让发版推送返回 403 |
 
 ### `_redirects` 规则约定
