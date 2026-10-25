@@ -1,4 +1,5 @@
 // Builds /llms.txt, /{zh,ja,ko}/llms.txt and /llms-full.txt (https://llmstxt.org/).
+// Also builds the four-language index.md, categories.md and about.md companions.
 //
 // The endpoints in src/pages/ collect the data (tools.ts, network.ts, persistence.ts,
 // the i18n JSON and the tools content collection) and pass it here, so every tool
@@ -33,10 +34,32 @@ export function llmsUrl(lang = 'en') {
   return `${SITE}${langPrefix(lang)}/llms.txt`;
 }
 
+export const AGENT_DOCUMENTS = ['index', 'categories', 'about'];
+
+/** Public resources shared by the footer, llms discovery and Markdown documents. */
+export function agentResources(lang = 'en') {
+  if (!LLMS_LANGS.includes(lang)) throw new Error(`llms: unsupported language ${lang}`);
+  const prefix = langPrefix(lang);
+  return [
+    { name: 'llms.txt', href: `${prefix}/llms.txt`, lang, descriptionKey: 'footer.resourceSummary' },
+    { name: 'llms-full.txt', href: '/llms-full.txt', lang: 'en', descriptionKey: 'footer.resourceFull' },
+    ...AGENT_DOCUMENTS.map((document) => ({
+      name: `${document}.md`, href: `${prefix}/${document}.md`, lang,
+      descriptionKey: `footer.resource${document[0].toUpperCase()}${document.slice(1)}`,
+    })),
+  ];
+}
+
 // Hand-written site notes, one set per language. Wording of the privacy notes follows
 // the About pages (src/pages/{,zh/,ja/,ko/}about.astro).
 const COPY = {
   en: {
+    documents: 'AI assistant resources',
+    pages: 'Public pages',
+    categoriesTitle: 'ZeroTool tool categories',
+    aboutTitle: 'About ZeroTool',
+    storage: "Some tools save your latest input or settings in localStorage. Each tool's privacy section explains what is saved and how to clear it. The sensitive tool pages listed above save neither input nor settings.",
+    aiLinks: 'The footer links to AI services open a fixed question about ZeroTool with public site URLs. They do not include tool input. The destination service controls its responses and may require sign-in.',
     intro: (n) => `ZeroTool (${SITE}) has ${n} free developer tools. Each tool is one web page; there is no account and no API.`,
     urls: `Tool pages are at ${SITE}/tools/{slug}/ in English and at /zh/tools/{slug}/, /ja/tools/{slug}/ and /ko/tools/{slug}/ in Chinese, Japanese and Korean. The same tools are listed with their names in those languages in the files under "Other languages".`,
     local: 'The tools process the text, files and keys you give them with JavaScript in your browser tab and do not upload them.',
@@ -66,6 +89,12 @@ const COPY = {
     end: '.',
   },
   zh: {
+    documents: 'AI 助手资料',
+    pages: '公开页面',
+    categoriesTitle: 'ZeroTool 工具分类',
+    aboutTitle: '关于 ZeroTool',
+    storage: '部分工具会在 localStorage 中保存最近的输入或设置。各工具的隐私说明会列出保存的内容和清除方式。上面列出的敏感工具页不保存输入或设置。',
+    aiLinks: '页脚的 AI 服务链接会打开一个关于 ZeroTool 的固定问题，附带本站公开网址，不包含工具输入。回答由目标服务提供，可能需要登录。',
     intro: (n) => `ZeroTool（${SITE}）提供 ${n} 个免费开发者工具。每个工具是一个网页，无需账号，没有 API。`,
     urls: `中文工具页地址为 ${SITE}/zh/tools/{slug}/，英文版去掉 /zh（/tools/{slug}/），日文、韩文版分别在 /ja/、/ko/ 下。`,
     local: '工具用浏览器标签页里的 JavaScript 处理你交给它的文本、文件和密钥，不上传。',
@@ -95,6 +124,12 @@ const COPY = {
     end: '。',
   },
   ja: {
+    documents: 'AI アシスタント向け資料',
+    pages: '公開ページ',
+    categoriesTitle: 'ZeroTool のツール分類',
+    aboutTitle: 'ZeroTool について',
+    storage: '一部のツールは最新の入力や設定を localStorage に保存します。各ツールのプライバシー説明に、保存内容と削除方法を記載しています。上記の機密情報を扱うツールページは入力も設定も保存しません。',
+    aiLinks: 'フッターの AI サービスへのリンクは、ZeroTool に関する定型の質問と公開 URL を開きます。ツールの入力内容は含みません。回答はリンク先のサービスが提供し、ログインが必要な場合があります。',
     intro: (n) => `ZeroTool（${SITE}）は ${n} 個の無料開発者ツールを提供しています。各ツールは 1 つの Web ページで、アカウントも API もありません。`,
     urls: `日本語のツールページは ${SITE}/ja/tools/{slug}/ にあります。英語版は /ja を除いた /tools/{slug}/、中国語版と韓国語版は /zh/、/ko/ の下にあります。`,
     local: 'ツールは入力されたテキスト、ファイル、鍵をブラウザーのタブ内の JavaScript で処理し、アップロードしません。',
@@ -124,6 +159,12 @@ const COPY = {
     end: '。',
   },
   ko: {
+    documents: 'AI 어시스턴트 자료',
+    pages: '공개 페이지',
+    categoriesTitle: 'ZeroTool 도구 카테고리',
+    aboutTitle: 'ZeroTool 소개',
+    storage: '일부 도구는 최근 입력이나 설정을 localStorage에 저장합니다. 각 도구의 개인정보 설명에 저장 내용과 삭제 방법이 나와 있습니다. 위에 나열한 민감한 정보를 다루는 도구 페이지는 입력과 설정을 저장하지 않습니다.',
+    aiLinks: '푸터의 AI 서비스 링크는 ZeroTool에 관한 고정 질문과 공개 URL을 엽니다. 도구 입력 내용은 포함하지 않습니다. 답변은 해당 서비스가 제공하며 로그인이 필요할 수 있습니다.',
     intro: (n) => `ZeroTool(${SITE})은 무료 개발자 도구 ${n}개를 제공합니다. 도구마다 웹 페이지 하나이며, 계정과 API는 없습니다.`,
     urls: `한국어 도구 페이지는 ${SITE}/ko/tools/{slug}/ 에 있습니다. 영어판은 /ko를 뺀 /tools/{slug}/, 중국어판과 일본어판은 /zh/, /ja/ 아래에 있습니다.`,
     local: '도구는 입력한 텍스트, 파일, 키를 브라우저 탭의 JavaScript로 처리하며 업로드하지 않습니다.',
@@ -230,6 +271,25 @@ function siteNotes(data, lang) {
   return lines;
 }
 
+function catalogLines(data, lang, counts = false) {
+  const c = COPY[lang];
+  const out = [];
+  for (const [category, tools] of toolsByCategory(data.tools)) {
+    out.push('', `## ${msg(data, lang, `category.${category}`)}${counts ? ` (${tools.length})` : ''}`, '');
+    for (const tool of tools) {
+      let line = `- [${nameOf(tool, lang)}](${toolUrl(tool.slug, lang)}): ${withEnd(descriptionOf(tool, lang), c.end)}`;
+      const note = networkNote(data, tool.slug, lang);
+      if (note) line += `${c.sp}${c.networkLabel}${c.colon}${withEnd(note, c.end)}`;
+      out.push(line);
+    }
+  }
+  return out;
+}
+
+function resourceLines(data, lang, resources = agentResources(lang)) {
+  return resources.map(({ name, href, descriptionKey }) => `- [${name}](${SITE}${href}): ${msg(data, lang, descriptionKey)}`);
+}
+
 /** One `/llms.txt` (en) or `/{lang}/llms.txt` file. */
 export function buildLlmsTxt(data, lang = 'en') {
   const c = COPY[lang];
@@ -242,15 +302,7 @@ export function buildLlmsTxt(data, lang = 'en') {
     ...siteNotes(data, lang),
   ];
 
-  for (const [category, tools] of toolsByCategory(data.tools)) {
-    out.push('', `## ${msg(data, lang, `category.${category}`)}`, '');
-    for (const tool of tools) {
-      let line = `- [${nameOf(tool, lang)}](${toolUrl(tool.slug, lang)}): ${withEnd(descriptionOf(tool, lang), c.end)}`;
-      const note = networkNote(data, tool.slug, lang);
-      if (note) line += `${c.sp}${c.networkLabel}${c.colon}${withEnd(note, c.end)}`;
-      out.push(line);
-    }
-  }
+  out.push(...catalogLines(data, lang));
 
   out.push('', `## ${c.otherLanguages}`, '');
   for (const other of LLMS_LANGS.filter((l) => l !== lang)) {
@@ -258,9 +310,33 @@ export function buildLlmsTxt(data, lang = 'en') {
   }
 
   out.push('', `## ${c.optionalHeading}`, '');
+  out.push(...resourceLines(data, lang, agentResources(lang).filter((r) => r.name.endsWith('.md'))));
   for (const [title, path, note] of c.optionalLinks) {
     out.push(`- [${title}](${SITE}${path})${note ? `: ${note}` : ''}`);
   }
+  return out.join('\n') + '\n';
+}
+
+/** Static Markdown companions to the public site, in each supported language. */
+export function buildAgentMarkdown(data, document, lang = 'en') {
+  if (!AGENT_DOCUMENTS.includes(document)) throw new Error(`llms: unsupported document ${document}`);
+  const resources = agentResources(lang);
+  const c = COPY[lang];
+  const title = document === 'index' ? 'ZeroTool' : document === 'categories' ? c.categoriesTitle : c.aboutTitle;
+  const out = [`# ${title}`, '', `> ${msg(data, lang, 'footer.tagline')}`, ''];
+  if (document === 'about') {
+    out.push(...siteNotes(data, lang), '', c.storage, '', c.aiLinks);
+  } else {
+    out.push(c.intro(data.tools.length), '', c.urls);
+    if (document === 'categories') out.push(...catalogLines(data, lang, true));
+  }
+  out.push('', `## ${c.documents}`, '', ...resourceLines(data, lang, resources.filter((r) => r.name !== `${document}.md`)));
+  out.push('', `## ${c.pages}`, '');
+  for (const page of ['home', 'tools', 'blog', 'about', 'privacy', 'terms', 'contact']) {
+    const path = `${langPrefix(lang)}/${page === 'home' ? '' : `${page}/`}`;
+    out.push(`- [${msg(data, lang, `nav.${page}`)}](${SITE}${path})`);
+  }
+  out.push(`- [${msg(data, lang, 'footer.github')}](${REPO_URL})`);
   return out.join('\n') + '\n';
 }
 

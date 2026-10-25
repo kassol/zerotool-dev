@@ -8,6 +8,7 @@
 
 | 脚本 | 类型 | 用途 | 何时跑 |
 |------|------|------|--------|
+| `test-agent-footer.mjs` | 回归 | 核对四语 Markdown 的固定文档名、分类/工具覆盖、联网与保存说明、构建目标与 sitemap；核对生成的页脚资料链接、可访问 AI 入口、公共固定问题及静态路由与响应头规则。只读源码和 dist，输出 stdout，不访问 AI 服务 | CI build 后 / 修改 AI 助手页脚或资料生成器前后 |
 | `test-adsense-loading.mjs` | 回归 | 执行 BaseLayout 的真实广告引导脚本，核对 DOM 就绪、绘制与空闲顺序、隐藏页、无 idle API 的回退、单次注入、原广告队列与脚本属性；编译 Astro，检查 dist（或首个参数目录）四语的普通页/文章/敏感页实际输出。只写 stdout，不加载 Google 脚本 | CI build 后 / 修改 AdSense 加载时机前后 |
 | `test-aes-async-ui.mjs` | 回归 | 执行 AES 完整页面脚本与真实共享快捷键，使用真实 Web Crypto、受控派生/读文件完成边界，覆盖四语与两种监听顺序的输入变化、清空、迟到成功/失败、新旧任务交错、文件更换与文件名、参数切换；只写 stdout，不读写系统剪贴板或网络 | CI / 修改 AES 页面交互或共享快捷键前后 |
 | `check-icon-coverage.mjs` | 校验 | 比对 `tools.ts` 与 `icons.ts`，缺图标即 exit 1 | `npm run build` 第 1 步 |

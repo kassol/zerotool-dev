@@ -1,5 +1,5 @@
 // Collects the data src/data/llms.mjs builds the llms files from. Used by the
-// llms endpoints in src/pages/.
+// machine-readable endpoints in src/pages/.
 import { getCollection } from 'astro:content';
 import { allTools } from './tools';
 import { networkToolSlugs, optionalNetworkToolSlugs } from './network';
@@ -29,4 +29,8 @@ export async function englishToolPages() {
 
 export function textResponse(text: string) {
   return new Response(text, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+}
+
+export function markdownResponse(text: string) {
+  return new Response(text, { headers: { 'Content-Type': 'text/markdown; charset=utf-8' } });
 }
