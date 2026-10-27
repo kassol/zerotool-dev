@@ -10,10 +10,10 @@ steps:
 faqItems:
   - id: "privacy"
     question: "证书会上传到服务器吗？"
-    answer: "不会。解析由页面里用 JavaScript 写的 DER 解析器完成，指纹和签名验证用浏览器自带的 Web Crypto API，页面不会发出带有证书内容的请求。输入框里的文本（包括从文件打开的证书）会保存在本浏览器的 localStorage，下次打开时恢复；含私钥块的输入不保存，还会删掉已保存的内容，点清空或在工具内按 Ctrl/⌘+L 也会删除。和其他 ZeroTool 页面一样，本页加载 Google Analytics 与 AdSense；提交输入编辑、打开文件或载入示例且解析成功后才记 decode，只含工具名和动作。输入过程和恢复已保存证书时仍会解析供显示，但不记使用事件。相同证书链、解析失败和已过期的异步结果不增加事件。统计不含证书内容。"
+    answer: "不会。解析由页面里用 JavaScript 写的 DER 解析器完成，SHA 指纹和签名验证用浏览器自带的 Web Crypto API，页面不会发出带有证书内容的请求。输入框里的文本（包括从文件打开的证书）会保存在本浏览器的 localStorage，受本站每项 50 KB 的上限约束，下次打开时恢复；更大的输入不保存，之前保存的内容会保留。含私钥块的输入不保存，还会删掉已保存的内容，点清空或在工具内按 Ctrl/⌘+L 也会删除。和其他 ZeroTool 页面一样，本页加载 Google Analytics 与 AdSense；提交输入编辑、打开文件或载入示例且解析成功后才记 decode，工具自定义事件参数只有工具名和动作。输入过程和恢复已保存证书时仍会解析供显示，但不记使用事件。相同证书链、解析失败和已过期的异步结果不增加事件。统计不含证书内容。"
   - id: "chain"
     question: "能直接粘贴 Nginx 用的 fullchain.pem 吗？"
-    answer: "可以。输入里的每张证书都会解析，工具会检查每张证书后面是否紧跟着签发它的证书，并用下一张证书的公钥验证签名。顺序不对时可以一键按正确顺序复制。"
+    answer: "可以。输入里的每张证书都会解析，一次最多 200 张。工具会检查每张证书后面是否紧跟着签发它的证书，并用下一张证书的公钥验证签名。顺序不对时可以一键按正确顺序复制。"
   - id: "private-key"
     question: "文件里同时有私钥怎么办？"
     answer: "PRIVATE KEY、RSA PRIVATE KEY、EC PRIVATE KEY 等私钥块会被跳过，不解析；含私钥的输入也不会保存到浏览器。.pfx / .p12（PKCS #12）文件不会被打开，请先用 openssl pkcs12 -nokeys 导出证书。"
@@ -68,7 +68,7 @@ Nginx 文档要求合并文件里「服务器证书必须在链上的其他证�
 
 ## 支持的输入
 
-- PEM：`CERTIFICATE`、旧写法 `X509 CERTIFICATE`、OpenSSL 的 `TRUSTED CERTIFICATE`；块前后的文字、CRLF 换行、多余空格都会忽略。
+- PEM：`CERTIFICATE`（[RFC 7468](https://www.rfc-editor.org/rfc/rfc7468)）；也接受非标准的旧写法 `X509 CERTIFICATE` 和 OpenSSL 的 `TRUSTED CERTIFICATE`。块前后的文字、CRLF 换行、多余空格都会忽略。
 - 没有 BEGIN / END 行的纯 Base64。
 - 二进制 DER 文件和 PKCS #7（`.p7b`），载入后会转成 PEM 显示在输入框里。
 - CSR、公钥、CRL 会被识别并说明，不会当成证书。CSR 请用 [CSR 解码器](/zh/tools/csr-decoder/)。
@@ -92,4 +92,5 @@ MySSL 把 `2026-09-26 22:49:11 UTC` 显示为「2026-09-27 06:49:11」，换算�
 - 没有信任库，不查 OCSP / CRL 吊销，也不连接服务器。在线取证书链可以用 `openssl s_client -connect 域名:443 -showcerts`；查记录用 [DNS 查询](/zh/tools/dns-lookup/)，看响应头用 [HTTP Header 分析器](/zh/tools/http-header-analyzer/)。
 - 签名验证用 Web Crypto：RSA（PKCS #1 v1.5、PSS）、P-256 / P-384 / P-521 的 ECDSA，以及浏览器支持时的 Ed25519。国密 SM2、ML-DSA、Ed448、DSA 的签名会解析，但标为未验证。
 - 名称约束只显示，不套用到服务器证书的域名上。
+- 有效期检查对所有 2026-03-15 之前签发的证书都套用 398 天上限。398 天规则从 2020-09-01 起生效（[Chrome 证书有效期说明](https://github.com/chromium/chromium/blob/main/net/docs/certificate_lifetimes.md)），更早的规则没有纳入检查。
 - 文件不超过 1 MB，一次最多 200 张证书。

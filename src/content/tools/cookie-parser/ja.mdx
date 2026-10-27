@@ -16,10 +16,10 @@ faqItems:
     answer: "よくある原因は、SameSite=None なのに Secure がない、__Host- の Cookie に Domain がある・Path が / でない、Domain がレスポンスのホストを含まない、http:// のページから Secure 付きの Cookie を設定した、名前と値が 4096 バイトを超えた、のいずれかです。その行をレスポンス URL と一緒に貼り付けると、カードに「拒否」と理由が出ます。"
   - id: "expires-max-age"
     question: "Expires と Max-Age の両方があるとどちらが使われますか？"
-    answer: "Max-Age です。Expires は無視されます。Max-Age=0 または負の値は削除の指示です。PHP の setcookie() は両方を出力しますが、同じ時刻を指しているので結果は変わりません。有効期間は最長 400 日に切り詰められます。"
+    answer: "Max-Age です。Expires は無視されます。Max-Age=0 または負の値は削除の指示です。PHP の setcookie() は両方を出力しますが、同じ時刻を指しているので結果は変わりません。Chrome は 400 日を超える有効期間を 400 日に切り詰め（104 以降）、RFC 6265bis も上限を 400 日とすることを推奨しています。"
   - id: "samesite"
     question: "SameSite を書かないとどうなりますか？"
-    answer: "Chrome 80 以降と Edge 86 以降は SameSite=Lax として扱い、他サイトのリンクから来たときは送りますが、クロスサイトの iframe・fetch・フォーム POST には付けません。Firefox と Safari はクロスサイトでも送ります。ブラウザーごとの差をなくすため、明示してください。"
+    answer: "Chrome 80 以降と Edge 86 以降は SameSite=Lax として扱い、他サイトのリンクから来たときは送りますが、クロスサイトの iframe・fetch・フォーム POST には付けません。Firefox と Safari はこの既定値を適用せず、Safari はサードパーティ Cookie も既定でブロックします。ブラウザーの既定値に依存しないよう、SameSite を明示してください。"
   - id: "privacy"
     question: "貼り付けた Cookie はどこかへ送られますか？"
     answer: "送られません。解析はブラウザー内で行い、ページはその内容を含むリクエストを一切送らず、保存もしません。このページ用に保存された値もページを開くたびに削除します。Cookie にはセッション ID が含まれることが多いため、このページは Google アナリティクスと AdSense を読み込みません。問い合わせに貼るときは「マスク済みをコピー」で値を [redacted] に置き換えてください（既定はすべての値で、セッション ID とトークンだけにもできます）。"
@@ -63,21 +63,23 @@ PHPSESSID=r4k8vq2m9n1p6s3t0w5x7y2z4b; connect.sid=s%3Aabc.def; name=%8ER%93c; PH
 | 属性 | ツールが適用するルール |
 |---|---|
 | `Expires` | [RFC 6265bis](https://datatracker.ietf.org/doc/draft-ietf-httpbis-rfc6265bis/) §5.1.1 の日付アルゴリズムで読みます。`2026-10-21T07:28:00Z` のような ISO 形式は読めず、セッション Cookie になります。日本時間ではなく GMT で書きます。 |
-| `Max-Age` | Expires より優先。0 以下は削除。400 日を超える有効期間は 400 日に（[Chrome は 104 以降](https://developer.chrome.com/blog/cookie-max-age-expires)）。 |
-| `Domain` | 先頭のドットは無視。省略すると発行元のホストだけ、指定するとすべてのサブドメインに送られます。[Public Suffix List](https://publicsuffix.org/) にあるパブリックサフィックスは拒否されます。`https://www.example.co.jp/` からの `sid=x; Domain=co.jp` は拒否、リストの PRIVATE 部にある `Domain=github.io` も同じです。Domain がレスポンスのホストと同じときは host-only になります（RFC 6265bis §5.7 ステップ 9）。 |
+| `Max-Age` | Expires より優先。0 以下は削除。400 日を超える有効期間は 400 日に切り詰めます。これは RFC 6265bis §5.5 が推奨する上限で、[Chrome は 104 以降](https://developer.chrome.com/blog/cookie-max-age-expires)この上限を適用します。 |
+| `Domain` | 先頭のドットは無視。省略すると発行元のホストだけ、指定するとそのサブドメインにも送られます。[Public Suffix List](https://publicsuffix.org/) にあるパブリックサフィックスは拒否されます。`https://www.example.co.jp/` からの `sid=x; Domain=co.jp` は拒否、リストの PRIVATE 部にある `Domain=github.io` も同じです。Domain がパブリックサフィックスでレスポンスのホストと同じときは host-only になります（RFC 6265bis §5.7 ステップ 9）。それ以外で Domain を指定した場合は、ホストと同じでもドメイン Cookie になります。 |
 | `Path` | 省略時や `/` で始まらないときは、レスポンス URL のディレクトリ。 |
 | `SameSite` | 省略時、Chrome 80 以降・Edge 86 以降は Lax、Firefox・Safari は違います（[MDN の互換性データ](https://developer.mozilla.org/ja/docs/Web/HTTP/Reference/Headers/Set-Cookie#ブラウザーの互換性)）。`None` には `Secure` が必要。 |
 | `Partitioned` | `Secure` が必要（[CHIPS](https://datatracker.ietf.org/doc/draft-cutler-httpbis-partitioned-cookies/)）。Chrome 114 以降、Firefox 141 以降、Safari 26.2 以降。 |
-| 名前のプレフィックス | `__Secure-` は Secure、`__Host-` は Secure・Path=/・Domain なし、`__Http-` と `__Host-Http-` はさらに HttpOnly が必要（Chrome 140 以降、Firefox 143 以降）。大文字小文字は区別しません。 |
+| 名前のプレフィックス | `__Secure-` は Secure、`__Host-` は Secure・Path=/・Domain なし、`__Http-` は Secure と HttpOnly、`__Host-Http-` はこの 4 つすべてが必要（Chrome 140 以降、Firefox 143 以降）。大文字小文字は区別しません。 |
 | サイズ | 名前と値の合計が UTF-8 で 4096 バイトを超えると無視。日本語は 1 文字 3 バイトです。属性の値が 1024 バイトを超えると、その属性だけ無視。 |
 
 ## Chrome が仕様と違う点（実測）
 
-2026-10-02、ローカルのテストサーバーから Chromium 152 に各行を送り、実際に保存された Cookie を読み出しました。日付・サイズ・プレフィックス・SameSite=None・Partitioned は RFC 6265bis どおりで、違ったのは次の点です。ツールは RFC に従って判定し、これらに当たる行には注記を付けます。
+2026-10-02、ローカルのテストサーバーから Chromium 152 に各行を送り、実際に保存された Cookie を読み出しました。サイズ・プレフィックス・SameSite=None・Partitioned は RFC 6265bis どおりで、違ったのは次の点です。ツールは RFC に従って解析し、これらに当たる場合は注記を付けます。シミュレーターは上書きされた Cookie の作成時刻を Chromium と同じく新しく扱います。
 
 - `Max-Age=+60`：RFC では無視、Chromium は 60 秒として扱います。
 - 値の途中のタブ：RFC では可、Chromium は拒否します。
 - `Domain=.`：RFC では空のドメイン（host-only）、Chromium は拒否します。
+- `Expires` の年が 1601 より前だと RFC の日付アルゴリズムで読めず、属性が無視されてセッション Cookie になります。Chromium は Cookie を破棄します。
+- `Expires` の年が 10000 だと RFC の年の範囲外で、属性が無視されてセッション Cookie になります。Chromium は 400 日に切り詰めます。
 - 既存の Cookie を上書きすると、Chromium は作成時刻を新しくするため、先に設定された Cookie の後ろに回ります。RFC は元の作成時刻を引き継ぎます。
 
 ## サーバー側の読み方
@@ -94,7 +96,7 @@ PHPSESSID=r4k8vq2m9n1p6s3t0w5x7y2z4b; connect.sid=s%3Aabc.def; name=%8ER%93c; PH
 
 ## 制限
 
-- パブリックサフィックスは Public Suffix List の固定版（2026-10-01、ICANN 部と PRIVATE 部、ワイルドカードと例外ルールを含む）で判定します。リストは頻繁に更新されるため、その後に追加されたサフィックスはツールに入っていません。ブラウザーも内蔵のリストをそれぞれの周期で更新します。リストは圧縮後で約 45 KB で、Set-Cookie か cookies.txt を初めて解析するときに読み込みます。読み込み前や失敗したときは、Domain 属性のある Cookie を「未確認」とし、リクエストのシミュレーションに含めず、Domain も判定しません。
+- パブリックサフィックスは Public Suffix List の固定版（2026-10-01、ICANN 部と PRIVATE 部、ワイルドカードと例外ルールを含む）で判定します。リストは頻繁に更新されるため、その後に追加されたサフィックスはツールに入っていません。ブラウザーも内蔵のリストをそれぞれの周期で更新します。リストは圧縮後で約 45 KB で、入力欄に初めてフォーカスしたとき、Set-Cookie か cookies.txt を解析したとき、「Set-Cookie ヘッダーを作成」で Domain を入力したときに読み込みます。読み込み前や失敗したときは、Domain 属性のある Cookie を「未確認」とし、リクエストのシミュレーションに含めず、Domain も判定しません。
 - シミュレーションは、各 Set-Cookie がトップレベルのページのレスポンスから来て、それ以前に Cookie がない前提です。SameSite を書かない新しい Cookie を Chrome が 2 分間だけクロスサイトの POST に付ける例外は扱いません。
 - 有効期間は貼り付けた時点から数えます。
 - ブラウザー拡張がエクスポートする JSON は読みません。Cookie ヘッダーか cookies.txt を貼り付けてください。

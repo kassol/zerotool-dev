@@ -19,7 +19,7 @@ faqItems:
     answer: "Use the one the other side expects. For a new design, HMAC-SHA256 is the common choice: GitHub, Stripe, Slack, Shopify, LINE and DingTalk use it. HMAC-SHA1 is still used by Twilio and by GitHub's legacy X-Hub-Signature header. HMAC-MD5 is included for old systems and for the RFC 2104 test vectors."
   - id: "key-encoding"
     question: "Should the key be text, hex or Base64?"
-    answer: "Follow the platform's documentation. GitHub, Stripe, Slack and LINE use the secret string as text, including any prefix such as whsec_. Chatwork and Standard Webhooks (Svix) Base64-decode the secret first. RFC test vectors list keys in hex. If the tool finds that your pasted signature matches another key encoding, it says so."
+    answer: "Follow the platform's documentation. GitHub, Stripe, Slack and LINE use the secret string as text (for Stripe, the whole value including the whsec_ prefix). Chatwork Base64-decodes its webhook token, and Standard Webhooks (Svix) decodes the part after whsec_. RFC test vectors list keys in hex. If the tool finds that your pasted signature matches another key encoding, it says so."
   - id: "local-stripe"
     question: "How do I check a Stripe webhook signature here?"
     answer: "Choose Stripe webhook (Stripe-Signature) as the format, paste the raw request body and the whole whsec_… signing secret, and paste the Stripe-Signature header into Signature to check. Stripe signs the timestamp, a period and the raw body with HMAC-SHA256 and sends t=…,v1=… in one header; test events also carry a fake v0 signature, and while a secret is being rolled the header can hold two v1 values. When the timestamp field is empty, the tool reads t= from the header, compares the result with each signature in it, and warns when the timestamp is more than 5 minutes away, the default tolerance of Stripe's libraries."
@@ -28,7 +28,7 @@ faqItems:
     answer: "Not in server code. Use a constant-time comparison: crypto.timingSafeEqual in Node.js (it throws when the lengths differ, so check the length first), hmac.compare_digest in Python, or hmac.Equal in Go. GitHub's documentation gives the same advice. The comparison in this tool runs only in your browser, so timing does not matter here."
 ---
 
-The result is HMAC as defined in [RFC 2104](https://www.rfc-editor.org/rfc/rfc2104): a key longer than the hash block (64 bytes for SHA-256, 128 for SHA-512) is hashed first, and a shorter key is padded with zeros. The tool tells you when either happens, and when a key is shorter than the output, which RFC 2104 §3 discourages. **Truncate to** keeps the leftmost bits, as in RFC 2104 §5 and the RFC 4231 test case 5.
+The result is HMAC as defined in [RFC 2104](https://www.rfc-editor.org/rfc/rfc2104): a key longer than the hash block (64 bytes for SHA-256, 128 for SHA-512) is hashed first, and a shorter key is padded with zeros. The tool notes a key longer than the block and a key shorter than the output; RFC 2104 §3 discourages the latter. **Truncate to** keeps the leftmost bits, as in RFC 2104 §5 and the RFC 4231 test case 5.
 
 ## Examples You Can Reproduce
 
@@ -46,7 +46,7 @@ That is the value in GitHub's documentation. The same check works with Slack's e
 {/* hmac-check: {"preset":"github","key":"It's a Secret to Everybody","msg":"Hello, World!\n","expect":"hex","verify":"sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17","diagnose":"msgTrailingNewline"} */}
 `8fde2e970f9163923fb1cb61bb945626ff2b4091d87e622ee3ad600160592325`
 
-Paste GitHub's `sha256=757107ea…` header into **Signature to check** and the tool answers *No match. Likely cause: it matches without the final line break. The sender signed the body without it.* The note under the result also says that the body ends with a line break. Other causes the checker tries: CRLF instead of LF, spaces around the key, JSON that was minified or indented after it arrived, a hex or Base64 key read as text, key and message swapped, a Stripe timestamp that differs from `t=` in the header, and another algorithm (GitHub's legacy `X-Hub-Signature` is HMAC-SHA1).
+Paste GitHub's `sha256=757107ea…` header into **Signature to check** and the tool answers *No match. Likely cause: it matches without the final line break. The sender signed the body without it.* The note under the result also says that the body ends with a line break. Other causes the checker tries: CRLF instead of LF, spaces around the key, JSON that was minified or indented after it arrived, a hex or Base64 key read as text, key and message swapped in Custom HMAC, a Stripe timestamp that differs from `t=` in the header, and another algorithm (GitHub's legacy `X-Hub-Signature` is HMAC-SHA1).
 
 **RFC 4231 test vectors with a hex key.** Test case 1 uses twenty `0x0b` bytes as the key and `Hi There` as data. Set the key encoding to Hex and paste `0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b`:
 
@@ -62,7 +62,7 @@ This equals the HMAC-SHA-256 line in [RFC 4231 §4.2](https://www.rfc-editor.org
 | [GitHub](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries) | raw body | secret as text | `sha256=` + hex |
 | [Stripe](https://docs.stripe.com/webhooks#verify-manually) | `t` + `.` + body | whole `whsec_…` string | `t=…,v1=…` (hex) |
 | [Slack](https://docs.slack.dev/authentication/verifying-requests-from-slack) | `v0:` + timestamp + `:` + body | signing secret | `v0=` + hex |
-| [Standard Webhooks](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md) | id `.` timestamp `.` body | Base64 after `whsec_` | `v1,` + Base64 |
+| [Standard Webhooks](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md) | id `.` timestamp `.` body | Base64 after `whsec_`, decoded | `v1,` + Base64 |
 | [Shopify](https://shopify.dev/docs/apps/build/webhooks/subscribe/https) | raw body | client secret | Base64 |
 | [Twilio](https://www.twilio.com/docs/usage/webhooks/webhooks-security) | URL + sorted POST parameters | auth token | Base64 of HMAC-SHA1 |
 
@@ -76,7 +76,7 @@ Tested on 2026-10-01 with GitHub's example. [CodeShack](https://codeshack.io/hma
 
 - Algorithms: MD5, SHA-1, SHA-224, SHA-256, SHA-384 and SHA-512. SHA-3, RIPEMD-160 and SM3 are not included; the Web Crypto API has none of them.
 - A text box turns every line break into LF. If the sender used CRLF, choose CRLF. For other exact bytes, paste the message as hex or Base64.
-- Text is encoded as UTF-8. A message stored as Shift_JIS, GBK or EUC-KR must be pasted as hex.
+- Text is encoded as UTF-8. A message stored as Shift_JIS, GBK or EUC-KR must be pasted as hex or Base64.
 - The checker runs in your browser. On your server, compare in constant time, and use the raw body bytes before any JSON parsing; the [JWT Generator](/tools/jwt-generator/) covers HS256 tokens, which are HMAC-SHA256 too.
 - Feishu, DingTalk and NAVER Cloud formats sign a request you send, so there is no body field for them.
 

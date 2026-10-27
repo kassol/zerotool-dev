@@ -10,10 +10,10 @@ steps:
 faqItems:
   - id: "privacy"
     question: "Is the certificate uploaded anywhere?"
-    answer: "No. A DER parser written in JavaScript decodes it in the page, and the browser's Web Crypto API computes the fingerprints and checks the signatures; the page sends no request that contains the certificate. The text in the input box, including certificates opened from a file, is saved in this browser's localStorage and restored on your next visit. Input that contains a private key block is not saved and removes the saved copy, and Clear or Ctrl/⌘+L in the tool deletes it too. The page loads Google Analytics and AdSense like other ZeroTool pages; a successful decode after committing an input edit, opening a file or loading the example records decode with the tool name and action only. Typing and restoring a saved certificate still decode for display, but do not record usage. An unchanged certificate chain, a failed decode or an obsolete asynchronous result does not add an event. The certificate is not included."
+    answer: "No. A DER parser written in JavaScript decodes it in the page, and the browser's Web Crypto API computes the SHA fingerprints and checks the signatures; the page sends no request that contains the certificate. The text in the input box, including certificates opened from a file, is saved in this browser's localStorage up to the site's 50 KB per-entry limit and restored on your next visit; larger input is not saved and leaves an earlier saved entry in place. Input that contains a private key block is not saved and removes the saved copy, and Clear or Ctrl/⌘+L in the tool deletes it too. The page loads Google Analytics and AdSense like other ZeroTool pages; a successful decode after committing an input edit, opening a file or loading the example records decode with the tool name and action as the tool's custom event parameters. Typing and restoring a saved certificate still decode for display, but do not record usage. An unchanged certificate chain, a failed decode or an obsolete asynchronous result does not add an event. The certificate is not included."
   - id: "chain"
     question: "Can I paste a full chain or a fullchain.pem file?"
-    answer: "Yes. Every certificate in the input is decoded. The tool checks that each certificate is followed by the one that issued it, verifies each signature with the next certificate's public key, and offers to copy the chain in the correct order when it is wrong."
+    answer: "Yes. Every certificate in the input is decoded, up to 200 per input. The tool checks that each certificate is followed by the one that issued it, verifies each signature with the next certificate's public key, and offers to copy the chain in the correct order when it is wrong."
   - id: "private-key"
     question: "What happens if my file also contains the private key?"
     answer: "Blocks such as PRIVATE KEY, RSA PRIVATE KEY or EC PRIVATE KEY are skipped without being decoded, and input that contains one is not saved in the browser. PKCS #12 (.pfx / .p12) files are not opened at all. Extract the certificates first with openssl pkcs12 -nokeys."
@@ -67,7 +67,7 @@ If you paste only a leaf, the chain card says the issuer is not in the input and
 | Unknown critical extension, duplicate extension | RFC 5280 §4.2 |
 | No SAN (browsers ignore the CN; Chrome removed CN matching in [version 58](https://chromestatus.com/feature/4981025180483584)) | RFC 9525 |
 | SHA-1 or MD5 signature, RSA key under 2048 bits | CA/B Forum Baseline Requirements |
-| Leaf validity longer than the Baseline Requirements allow for its issue date (398, 200, 100, then 47 days; ballot SC-081) | BR §6.3.2 |
+| Leaf validity above the tier for the issue date (398 days before 2026-03-15; 200, 100, then 47 days from 2026-03-15, 2027-03-15 and 2029-03-15; earlier limits are not modelled) | BR §6.3.2 |
 | Issuer is a CA, has keyCertSign, path length not exceeded | RFC 5280 §4.2.1.3, §4.2.1.9 |
 
 Times are shown in UTC next to the raw encoded value, so a `+0800` offset or a missing second stays visible. Key sizes come from the key itself: a P-521 key is 521 bits, not 528.
@@ -76,7 +76,7 @@ The fingerprint card has SHA-256, SHA-1 and MD5 of the DER bytes, plus the SHA-2
 
 ## Input formats
 
-- PEM blocks labelled `CERTIFICATE`, the legacy `X509 CERTIFICATE`, and OpenSSL's `TRUSTED CERTIFICATE` ([RFC 7468](https://www.rfc-editor.org/rfc/rfc7468)); text around the blocks, CRLF line endings and extra spaces are ignored.
+- PEM blocks labelled `CERTIFICATE` ([RFC 7468](https://www.rfc-editor.org/rfc/rfc7468)); the non-standard `X509 CERTIFICATE` label and OpenSSL's `TRUSTED CERTIFICATE` are also accepted. Text around the blocks, CRLF line endings and extra spaces are ignored.
 - Base64 without the BEGIN / END lines, as some control panels show it.
 - Binary DER files and PKCS #7 bundles (`.p7b`), in PEM or DER. A loaded binary file is converted to PEM in the box.
 - Certificate signing requests, public keys and CRLs are recognised and named, not decoded. For CSRs use the [CSR Decoder](/tools/csr-decoder/).
@@ -101,4 +101,5 @@ SSL Shopper also shows dates without a time zone: a certificate that starts at 2
 - No trust store, no revocation (OCSP / CRL) check, no live TLS connection. Fetch a chain with `openssl s_client -connect host:443 -showcerts`, or look up records with the [DNS Lookup](/tools/dns-lookup/) tool and inspect response headers with the [HTTP Header Analyzer](/tools/http-header-analyzer/).
 - Signatures are verified with Web Crypto: RSA (PKCS #1 v1.5 and PSS), ECDSA on P-256, P-384 and P-521, and Ed25519 where the browser supports it. ML-DSA, Ed448, DSA, SM2, MD5 and SHA-224 signatures are decoded but reported as not checked.
 - Name constraints are shown but not applied to the leaf's names.
+- The validity check applies the 398-day tier to every certificate issued before 2026-03-15. The 398-day limit took effect on 2020-09-01 ([Chrome certificate lifetimes](https://github.com/chromium/chromium/blob/main/net/docs/certificate_lifetimes.md)); earlier limits are not modelled.
 - Files up to 1 MB and up to 200 certificates per input.
