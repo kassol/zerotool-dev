@@ -10,8 +10,8 @@
 |---|---:|---:|---:|---|
 | W1 结果可信 | 40 | 0 | 0 | AES 的 W1 按 v1.141.3 修复与回归改判为通过：输入 / 密钥 / 参数 / 文件 / 清空后旧任务不再写回，203 项页面回归与 32 个浏览器场景通过。其余 39 个维持 2026-10-24 的通过。 |
 | W2 边界说清楚 | 40 | 0 | 0 | 沿用 2026-10-24 证据。 |
-| W3 响应及时 | 0 | 0 | 40 | 本机三次 load average 为 19.89 / 22.42 / 17.11，均高于 10，没有合格采样窗口；Windows 远程大文件的浏览器文件选择授权仍等 Sir 批准，试跑 0/18。见 `2026-10-27-w3-local-load-gate.md`。 |
-| W4 交互顺手 | 2 | 0 | 38 | 40 个工具都完成了 ZeroTool 侧真实任务与 390 × 844 移动布局检查（横向溢出 0）。前三竞品对照：5 个 3 / 3 完成、8 个 1–2 / 3、27 个未完成；4 个有键盘路径记录；同时满足两项的是 text-to-binary 与 url-parser。其余 38 个缺竞品或键盘证据。见 `2026-10-25-w4-interaction-comparison.md`、`2026-10-27-w4-rest-batch-a.md`、`-batch-b.md`、`-mobile.md`。 |
+| W3 响应及时 | 0 | 0 | 40 | 本机负载窗口 14.99 / 12.08 / 8.39 / 11.40 / 11.47 / 10.09，采样期没有连续满足「前、中、后都低于 10」的窗口；10 个样本排除、30 个工具未跑，四个大文件 fixture 不在归档中；Windows 远程大文件的浏览器文件选择授权仍等 Sir 批准，试跑 0/18。见 `2026-10-28-w3-retest.md`。 |
+| W4 交互顺手 | 7 | 0 | 33 | ZeroTool 主流程与键盘到达主输入框均 40 / 40 有记录（本轮 38 个，另 2 个用前批证据），本轮 13 个工具仅用键盘完成主流程。前三竞品对照：8 个 3 / 3 完成、8 个 1–2 / 3、24 个未完成；同时具备两项的 7 个。`svg-optimizer` 有 3 / 3 竞品但无键盘记录；`dns-lookup` 因前批把访客 IP 当成 A 记录，从 3 / 3 降为 2 / 3。见 `2026-10-28-w4-batch-c.md`。 |
 | W5 看起来是一个整体 | 40 | 0 | 0 | 沿用 2026-10-24 的 640 组四语 × 两主题 × 两视口记录。 |
 | W6 说真话 | 40 | 0 | 0 | 覆盖率 40 / 40。八批共审查 4,503 条语言级陈述：supported 3,064、corrected 773、qualified 428、unverified 238；未核实项均在逐工具证据中标出，主要是带日期的竞品 / 浏览器观察与少数无法取得的一手来源。 |
 | W7 有一处做得比别人好 | 40 | 0 | 0 | 沿用 2026-10-24 证据。 |
@@ -36,13 +36,14 @@
 
 ## W4 覆盖明细
 
-- ZeroTool 真实任务：40 / 40（含输入、输出或下载产物、页面点击、结果 `scrollY`）。
-- 移动视口 390 × 844：40 / 40，横向溢出 0。
-- 前三竞品完整对照（3 / 3 完成，5 个）：json-formatter、dns-lookup、svg-optimizer、text-to-binary、url-parser。
-- 部分完成（1–2 / 3，8 个）：markdown-table-generator、string-escape、number-base、image-to-base64、pkce-generator、color-palette-generator、color-shades-generator、wifi-qr-code-generator。
-- 未完成竞品对照（27 个）：`ai-token-counter`（3 个竞品都未取得可信结果）与其余 26 个未做竞品对照的工具。
-- 键盘路径（4 个可只用 Tab 与键入完成主流程）：text-to-binary（10 次 Tab 从 h1 到文本框）、string-escape（12 次）、number-base（13 次）、url-parser（记录为可完成，未记 Tab 次数）；其余未记录。
-- 同时具备完整竞品对照与键盘证据的 2 个：text-to-binary、url-parser。
+- ZeroTool 真实任务：40 / 40 有输入、页面点击与结果 `scrollY` 记录；本轮重测 38 个，结果取得与否逐工具记在证据 JSON。
+- 键盘到达主输入框：40 / 40 有 Tab 次数记录；本轮 13 个工具只用键盘完成主流程，加上前批的 text-to-binary、url-parser 共 15 个。
+- 移动视口 390 × 844：40 / 40，横向溢出 0（前批）。
+- 前三竞品完整对照（3 / 3，8 个）：json-formatter、number-base、string-escape、text-to-ascii-art、pkce-generator、text-to-binary、url-parser、svg-optimizer。
+- 部分完成（1–2 / 3，8 个）：dns-lookup、markdown-table-generator、unicode-text-converter、color-shades-generator、image-to-base64、wifi-qr-code-generator、hmac-generator、color-palette-generator。
+- 未完成竞品对照（24 个）：ai-token-counter、markdown-to-word、aes-encrypt-decrypt、qr-code-decoder、svg-to-png-converter、file-hash-checker、image-color-palette、totp-generator、har-file-analyzer、ssl-certificate-decoder、htpasswd-generator、css-clip-path-generator、protobuf-to-json、bcrypt-generator、json-schema-validator、openapi-validator、jq-playground、sprite-sheet-generator、cookie-parser、glassmorphism-generator、color-blindness-simulator、zero-width-character-detector、eyedropper-color-picker、qr-code-generator。
+- 同时具备完整竞品对照与键盘证据的 7 个（W4 通过）：json-formatter、number-base、string-escape、text-to-ascii-art、pkce-generator、text-to-binary、url-parser。
+- `svg-optimizer` 竞品 3 / 3、产物逐字节比较通过，但主流程是文件选择，未记录键盘路径，仍记证据不足。
 
 ## 站点矩阵（S1–S5）
 
@@ -57,6 +58,8 @@
 ## 结论
 
 - W6 覆盖完成，W1 的 AES 改判完成；W5 / W7 / W2 沿用既有通过。
-- W3 仍为全部证据不足；W4 只有 text-to-binary 与 url-parser 同时满足竞品与键盘证据。S3 的实验室 LCP 已达标但自 v1.142.3 起未复测，INP 无现场数据。
+- W4 从 2 个通过增到 7 个：新增 json-formatter、number-base、string-escape、text-to-ascii-art、pkce-generator；`dns-lookup` 因 A 记录未被真正核对而降为部分完成。
+- W3 仍为全部证据不足：本轮采样窗口的 load average 为 11.40 / 11.47 / 10.09，10 个样本全部排除；Windows 远程大输入仍等 Sir 授权。
+- S3 的实验室 LCP 已达标但自 v1.142.3 起未复测，INP 无现场数据。
 - 不能宣告作品级全项通过，也不提交 AdSense 重提；这两件事等 Sir 走查后决定。
 - 最终验证见 `2026-10-28-final-verification.md`。
