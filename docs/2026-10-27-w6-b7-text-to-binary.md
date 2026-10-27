@@ -13,7 +13,7 @@
 
 共审查 166 组陈述：supported 116、corrected 26、qualified 11、unverified 13。
 
-> 汇总口径：前一份同路径摘要按 72 条统计（batch-7 与根 AGENTS.md 沿用该数）；本报告为 166 条。若只替换 text-to-binary，batch-7 总数应由 559 调整为 653，八批总数 4,409 → 4,503（supported 3,064 / corrected 773 / qualified 428 / unverified 238）。主会话核对后更新汇总。
+> 汇总口径：本报告 166 条，取代前一份 72 条摘要。`docs/2026-10-27-w6-batch-7.md` 与根 `AGENTS.md` 已按本报告更新（batch-7 653 条；八批 4,503 条：supported 3,064 / corrected 773 / qualified 428 / unverified 238）。
 
 | 语言 | 陈述 | supported | corrected | qualified | unverified |
 |---|---:|---:|---:|---:|---:|
