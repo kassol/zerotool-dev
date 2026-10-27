@@ -26,7 +26,7 @@ faqItems:
     answer: "Base64 turns every 3 bytes into 4 characters and pads the last group, so the length is 4 × ceil(bytes ÷ 3). That is 33.3% more for large files and a little more for tiny ones: a 95-byte PNG becomes 128 characters (+34.7%). The data URI prefix adds 22 more characters for PNG (data:image/png;base64,) and 26 for SVG."
   - question: "Is my image uploaded?"
     id: "privacy"
-    answer: "No. The browser's FileReader reads the file in this tab; the file is not uploaded, and neither the file nor the text is saved in browser storage. When an image has been encoded, or a Base64 string decoded with Decode, the page analytics record the tool name and the action (encode or decode), not the file or the text. In a test on 2026-09-30, base64-image.de and base64.guru sent the file to their servers to encode it."
+    answer: "No. The browser's FileReader reads the file in this tab; the file is not uploaded, and neither the file nor the text is saved in browser storage. When an image has been encoded, or a Base64 string decoded with Decode, the page analytics record the tool name and the action (encode or decode), not the file or the text. Clear removes the file, the text and the decoded image from the page. In a test on 2026-09-30, base64-image.de and base64.guru sent the file to their servers to encode it."
 ---
 
 ## Two Files, Encoded
@@ -37,7 +37,7 @@ The first file is a 2×2 blue PNG of 95 bytes. The tool reports `PNG · 2 × 2 p
 <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVR4nGNQTX79H4QZYAwAUe4JyX4GS0cAAAAASUVORK5CYII=" width="2" height="2" alt="dot">
 ```
 
-The `width` and `height` come from the decoded image, so the browser can reserve the space before the image loads. The alt text is the file name; change it to describe the image. The growth is more than 33.3% because Base64 works in groups of 3 bytes: 95 bytes is 31 full groups plus 2 bytes, and the last group is padded to 4 characters with `=` ([RFC 4648, section 4](https://www.rfc-editor.org/rfc/rfc4648#section-4)).
+The `width` and `height` come from the decoded image, so the browser can reserve the space before the image loads. The alt text is the file name without its extension; change it to describe the image. The growth is more than 33.3% because Base64 works in groups of 3 bytes: 95 bytes is 31 full groups plus 2 bytes, and the last group is padded to 4 characters with `=` ([RFC 4648, section 4](https://www.rfc-editor.org/rfc/rfc4648#section-4)).
 
 The second file is a 139-byte check-mark icon, `check.svg`. For SVG the tool offers two data URIs: Base64 is 214 characters and URL-encoded is 198. The shorter one is selected, and the **CSS** output is:
 
@@ -45,13 +45,13 @@ The second file is a 139-byte check-mark icon, `check.svg`. For SVG the tool off
 background-image: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%2316a34a%22 stroke-width=%223%22%3E%3Cpath d=%22M5 13l4 4L19 7%22/%3E%3C/svg%3E%0A");
 ```
 
-Only the characters that change meaning are escaped. `#` must be `%23`, because the [URL parser](https://url.spec.whatwg.org/#concept-basic-url-parser) treats it as the start of a fragment and drops the rest of the icon, so `#16a34a` would break the image. Line breaks become `%0A`, because the parser deletes raw tabs and newlines, which can join `<svg` to the next attribute. `"` is escaped so the URI can sit inside `url("…")` or an HTML attribute, and `&` is escaped so an HTML parser does not turn `&amp;` into `&`. Spaces and single quotes stay as they are. The bytes are escaped one at a time, so the file's own character encoding is kept.
+Only the characters that would break the URL, the HTML attribute or the CSS string are escaped, and bytes outside ASCII are escaped too. `#` must be `%23`, because the [URL parser](https://url.spec.whatwg.org/#concept-basic-url-parser) treats it as the start of a fragment and drops the rest of the icon, so `#16a34a` would break the image. Line breaks become `%0A`, because the parser deletes raw tabs and newlines, which would join the end of one line to the start of the next. `"` is escaped so the URI can sit inside `url("…")` or an HTML attribute, and `&` is escaped so an HTML parser does not turn `&amp;` into `&`. Spaces and single quotes stay as they are. The bytes are escaped one at a time, so the file's own character encoding is kept.
 
 ## The Type Comes From the File, Not the Name
 
 A data URI states a type, and that type should match the bytes. The in-browser converters tested below copy the type the browser reports, and Chromium takes that from the file extension: a PNG named .jpg is reported as `image/jpeg`. The tool reads the first bytes instead and matches them against the image signatures in the [WHATWG MIME Sniffing standard](https://mimesniff.spec.whatwg.org/#matching-an-image-type-pattern): PNG, JPEG, GIF, WebP, BMP and ICO. It also checks the `ftyp` brands of AVIF and HEIC, the TIFF and JPEG XL headers, and the start of SVG text. A PNG named `logo.jpg` therefore gives `data:image/png`, with a note about the extension. A file without an extension is detected the same way. A PDF or ZIP gets an error that lists its first bytes.
 
-This matters most when the image goes to an API. OpenAI's [image input guide](https://developers.openai.com/api/docs/guides/images-vision) sends a data URI in `image_url.url` and accepts PNG, JPEG, WebP and non-animated GIF. Anthropic's [vision guide](https://platform.claude.com/docs/en/build-with-claude/vision) takes the bare Base64 in `data` and the type in a separate `media_type` field, and supports JPEG, PNG, GIF and WebP. For the first, copy **Data URI**; for the second, copy **Base64** and use the type the tool shows. A photo from an iPhone set to "High Efficiency" is HEIC, which neither list includes, and the tool labels it as HEIC even when the name ends in `.jpg`.
+This matters most when the image goes to an API. OpenAI's [image input guide](https://developers.openai.com/api/docs/guides/images-vision) sends a data URI in the `image_url` field (`image_url.url` in Chat Completions) and accepts PNG, JPEG, WebP and non-animated GIF. Anthropic's [vision guide](https://platform.claude.com/docs/en/build-with-claude/vision) takes the bare Base64 in `data` and the type in a separate `media_type` field, and supports JPEG, PNG, GIF and WebP. For the first, copy **Data URI**; for the second, copy **Base64** and use the type the tool shows. A photo from an iPhone set to "High Efficiency" is HEIC, which neither list includes, and the tool labels it as HEIC even when the name ends in `.jpg`.
 
 ## Base64 Back to an Image
 
@@ -74,9 +74,9 @@ The server-side tools get the PNG right because they read the bytes, but the fil
 
 ## Limits
 
-- **File size:** up to 100 MB. The Base64 of a 100 MB file is about 140 million characters. Outputs over 2,000,000 characters are not shown in the box (an 85 MB file used to freeze the page there); Copy and Download .txt give the full text. Chromium and Firefox limit a data URL to 512 MB and Safari to 2048 MB ([MDN](https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Schemes/data#length_limitations)).
+- **File size:** up to 100 MB. The Base64 of the largest accepted file (104,857,600 bytes) is about 140 million characters. Outputs over 2,000,000 characters are not shown in the box (an 85 MB file used to freeze the page there); Copy and Download .txt give the full text. Chromium and Firefox limit a data URL to 512 MB and Safari to 2048 MB ([MDN](https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Schemes/data#length_limitations)).
 - **Preview:** the thumbnail uses your browser's decoder. HEIC and HEIF display only in Safari 17 and later ([Can I use](https://caniuse.com/heif)), and TIFF only in Safari ([MDN image format guide](https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Formats/Image_types)). The Base64 is complete either way.
-- **One file at a time**, and no image URLs: the tool makes no network requests, so save the image first.
+- **One file at a time**, and no image URLs: the tool does not download an image, so save it first.
 - **No resizing or compression.** Shrink the file first with the [Image Compressor](/tools/image-compressor/), or clean an SVG with the [SVG Optimizer](/tools/svg-optimizer/). URL encoding keeps the SVG byte for byte.
 - **Decoding knows image formats only.** For Base64 of any other file, use [Base64 Encode / Decode](/tools/base64/).
 - **Inlining is not always faster.** An inlined image is cached only with the HTML or CSS file that contains it, and any change to the image changes that file. It suits small icons that are used once, and a separate file suits photos and images shared across pages.

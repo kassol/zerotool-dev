@@ -28,12 +28,12 @@ faqItems:
 
 The tool converts your color to OKLCH (lightness, chroma, hue in the Oklab space, [CSS Color 4 §9.2](https://www.w3.org/TR/css-color-4/#ok-lab)) and builds 11 steps, 50 to 950, like the [Tailwind CSS default palette](https://tailwindcss.com/docs/colors):
 
-- **Lightness** follows Tailwind v4's own ladder for the nearest hue. Tailwind's yellows are lighter at every step than its blues, so the tool interpolates between the two palettes whose 500 hue surrounds yours. Grays and near-grays use the median ladder of Tailwind's nine neutral palettes. The ladder is rescaled so it passes exactly through your color.
+- **Lightness** follows Tailwind v4's own ladder for the nearest hue. Tailwind's yellows are lighter at every step than its blues, so each hue has its own ladder; the tool interpolates between the two palettes whose 500 hue surrounds yours. Grays and near-grays use the median ladder of Tailwind's nine neutral palettes. The ladder is rescaled so it passes exactly through your color.
 - **Chroma** follows the same palette's curve: low at 50, highest around 400–600, falling toward 950.
 - **Hue** stays the one you entered. Unless you set a hue shift, every step has the same OKLCH hue.
 - **Out-of-gamut steps** keep their lightness and hue and lose chroma until they fit in sRGB ([CSS Color 4 §14.1.3](https://www.w3.org/TR/css-color-4/#gamut-mapping)).
 
-Your color is never altered: it is copied byte for byte into its step. With Auto, lightness and relative luminance fall at every step from 50 to 950, so a lower number is always lighter.
+Your color goes into its step unchanged. Two inputs are adjusted first, and the status line says which: transparency is dropped, and an `oklch()` value outside sRGB has its chroma lowered until it fits. With Auto, lightness and relative luminance fall at every step from 50 to 950, so a lower number is always lighter.
 
 For `#3b82f6` (Tailwind v3 blue-500) the scale is:
 
@@ -73,7 +73,7 @@ The input lands at 500 because Tailwind v4's blue-500 has the same OKLCH lightne
 }
 ```
 
-Paste it after `@import "tailwindcss";` and you get `bg-brand-500`, `text-brand-900` and the rest ([Tailwind CSS: Theme variables](https://tailwindcss.com/docs/theme)). For Tailwind v3, choose **Tailwind v3 config**: it writes a complete `tailwind.config.js` with the scale under `theme.extend.colors`. Every export is checked in the test by the real tool that reads it: PostCSS for CSS, Tailwind 4.3.3's compiler, Dart Sass 1.105 and `JSON.parse`.
+Paste it after `@import "tailwindcss";` and you get `bg-brand-500`, `text-brand-900` and the rest ([Tailwind CSS: Theme variables](https://tailwindcss.com/docs/theme)). For Tailwind v3, choose **Tailwind v3 config**: it writes a complete `tailwind.config.js` with the scale under `theme.extend.colors`. The test reads every export back: PostCSS for CSS, Tailwind 4.3.3's compiler for `@theme`, the v3 config executed as CommonJS, Dart Sass 1.105 for SCSS and `JSON.parse` for JSON.
 
 ## Example: a yellow that should turn amber, not olive
 
@@ -109,7 +109,7 @@ Tailwind lets lightness vary by hue, and this tool follows it, so the same step 
 | 600 | 5.12 | 3.29 | 2.85 |
 | 700 | 6.53 | 5.05 | 4.75 |
 
-WCAG 2.2 asks for [4.5:1 for body text and 3:1 for large text](https://www.w3.org/TR/WCAG22/#contrast-minimum). Read the figure on the card, or test a specific pair in the [Color Contrast Checker](/tools/color-contrast-checker/). Material Design 3 takes the other route: its HCT "tone" is CIE L*, so a tone difference of 50 guarantees 4.5:1 ([material-color-utilities, hct.ts](https://github.com/material-foundation/material-color-utilities/blob/main/typescript/hct/hct.ts)). Radix Colors uses 12 steps, each with a stated job such as backgrounds, borders, solid fills and text ([Radix: Understanding the scale](https://www.radix-ui.com/colors/docs/palette-composition/understanding-the-scale)).
+WCAG 2.2 asks for [4.5:1 for body text and 3:1 for large text](https://www.w3.org/TR/WCAG22/#contrast-minimum). Read the figure on the card, or test a specific pair in the [Color Contrast Checker](/tools/color-contrast-checker/). Material Design 3 takes the other route: its HCT "tone" is CIE L*, so a tone difference of 50 keeps contrast near 4.5:1 or higher — 4.48:1 at the light end (tones 100 and 50), 4.68:1 at the dark end (50 and 0) ([material-color-utilities, hct.ts](https://github.com/material-foundation/material-color-utilities/blob/main/typescript/hct/hct.ts)). Radix Colors uses 12 steps, each with a stated job such as backgrounds, borders, solid fills and text ([Radix: Understanding the scale](https://www.radix-ui.com/colors/docs/palette-composition/understanding-the-scale)).
 
 ## How it compares with other generators
 
@@ -121,10 +121,10 @@ Measured on 2026-10-01 with `#1a73e8`:
 
 ## Limits
 
-- **sRGB only.** Steps are clipped to what a standard screen shows; there is no Display P3 output. Tailwind v4's own palette goes beyond sRGB, so its oklch() values can look more vivid on P3 screens.
+- **sRGB only.** Steps stay inside what an sRGB screen shows; there is no Display P3 output. Tailwind v4's own palette goes beyond sRGB, so its oklch() values can look more vivid on P3 screens.
 - **One hue per scale**, unless you set a shift at 50 and 950. Shifts run from −180 to 180 degrees and change linearly from your color's step.
 - **11 fixed steps**, 50 to 950. No custom step names and no 12-step Radix layout.
-- **Locking can collapse steps.** White locked at 500 makes 100–500 identical; the status line names the collapsed steps.
+- **Locking can collapse steps.** White locked at 500 makes 50–500 identical; the status line names 100–500, the steps that repeat the one before.
 - **Input:** hex with 3, 4, 6 or 8 digits, `rgb()`, `hsl()` and `oklch()`. Alpha is ignored. Named colors (`blue`), `lab()`, `lch()` and `color()` are not read.
 - **Tailwind v3 and oklch():** with Tailwind CSS 3.4.19, `bg-brand-500` works but `bg-brand-500/50` is silently not generated for an oklch() value (tested 2026-10-01). Use HEX, RGB or HSL for v3.
 - **Contrast is WCAG 2.2** against pure white and pure black only. It is not APCA, and it does not test two shades against each other.
