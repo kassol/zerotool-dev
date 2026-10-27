@@ -81,7 +81,7 @@ for (const [i, lang] of LANGS.entries()) {
 }
 
 // ---------- color tokens ----------
-const base = read('src/layouts/BaseLayout.astro');
+const base = read('src/styles/site.css');
 const rootBlock = /:root \{([\s\S]*?)\n  \}/.exec(base)[1];
 const darkMedia = /@media \(prefers-color-scheme: dark\) \{\s*:root:not\(\[data-theme="light"\]\) \{([\s\S]*?)\n    \}/.exec(base)[1];
 const darkAttr = /\n  \[data-theme="dark"\] \{([\s\S]*?)\n  \}/.exec(base)[1];
