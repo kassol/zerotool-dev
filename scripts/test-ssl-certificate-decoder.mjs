@@ -428,6 +428,8 @@ function makeCert({ version = 3, serial = [0x01], issuer, subject, nb = D.utc('2
   }
   const pfx = new Uint8Array(D.seq(D.int(3), D.seq(D.oid('1.2.840.113549.1.7.1'), D.ctx(0, D.octet(Buffer.from([0x30, 0x00])))), D.seq()));
   eq('PKCS #12 is refused', [E.classifyDer(pfx).kind, E.parseInput(pfx).hasPrivateKey], ['pkcs12', true]);
+  const pfxPem = E.parseInput(E.toPem(pfx, 'PKCS12'));
+  eq('PKCS #12 PEM is refused and marked as a private-key input', [pfxPem.certs.length, pfxPem.hasPrivateKey, pfxPem.notices[0].code], [0, true, 'notCert_pkcs12']);
   const spkiDer = new Uint8Array(privateKey.export({ type: 'pkcs8', format: 'der' }).length ? generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ type: 'spki', format: 'der' }) : []);
   eq('bare public key', E.parseInput(spkiDer).notices[0].code, 'notCert_publicKey');
   const csrDer = D.seq(D.seq(D.int(0), nameCN('x'), Buffer.from(spkiDer), D.ctx(0, Buffer.alloc(0))), ALG.ecdsa256, D.bit([1, 2, 3]));
@@ -733,6 +735,8 @@ for (const action of ['Clear', 'Ctrl+L']) {
   const file = pageFixture(); file.file(Promise.resolve(new TextEncoder().encode(privateBlock + EXAMPLES.en.pem).buffer)); await settlePage(file);
   check('file opening removes private keys before displaying input', file.get('scd-input').value === EXAMPLES.en.pem);
   check('file opening never saves private key text', file.saved.length === 1 && !file.saved[0][1].includes('PRIVATE KEY'));
+  const pfxPage = pageFixture(); pfxPage.type('-----BEGIN PKCS12-----\nMAA=\n-----END PKCS12-----'); pfxPage.flush(350); await settlePage(pfxPage);
+  check('pasted PKCS #12 PEM is not saved and clears stored input', pfxPage.saved.length === 0 && pfxPage.cleared.length > 0);
 }
 
 // S2-10g: committed decode, restored input and obsolete asynchronous work.
