@@ -41,3 +41,9 @@
 - 矩阵与最终文档为 `24bc7603`，不另打 tag。
 
 未提交 AdSense 重提，也未宣告作品级全项通过。
+
+## 2026-10-28 补充（W4 批次 C 与 W3 复测）
+
+- W4：38 个工具重测键盘路径与主流程，新增 5 个同时具备 3 / 3 竞品对照与键盘证据的工具（json-formatter、number-base、string-escape、text-to-ascii-art、pkce-generator），W4 通过 7 / 40。`dns-lookup` 因前批把访客 IP 当成 A 记录，降为部分完成；`svg-optimizer` 竞品 3 / 3 但无键盘记录。证据见 `2026-10-28-w4-batch-c.md`。
+- W3：采样窗口 load average 11.40 / 11.47 / 10.09，10 个样本全部排除、30 个工具未跑；四个大文件 fixture 不在归档中。W3 仍为 40 个证据不足。见 `2026-10-28-w3-retest.md`。
+- audit 24 PASS、build 通过、170 个 `test-*.mjs` 全部退出 0。本轮无用户可见交互改动，未打 tag。
