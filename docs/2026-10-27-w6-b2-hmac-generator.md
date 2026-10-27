@@ -25,7 +25,7 @@
 ## 未核实
 
 - en.mdx:73、ja.mdx:79、ko.mdx:76 的竞品操作是 2026-10-01 的观察，本轮未重跑，也无一手文档，保留原文。
-- privacy 的“Reloading the page clears every field”依赖 `autocomplete="off"` 与无存储；本轮未做浏览器重载验证。
+- privacy 的“Reloading the page clears every field”已在 2026-10-27 用本地构建的 Chromium 验证：填入密钥与消息后重载，两栏为空，localStorage 中没有本工具的键；`autocomplete="off"` 与无存储的代码依据保留。
 
 ## 来源（查阅 2026-10-27）
 
