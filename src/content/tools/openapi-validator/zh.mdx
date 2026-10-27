@@ -12,13 +12,13 @@ faqItems:
     answer: "Swagger 2.0 与 OpenAPI 3.0、3.1、3.2。工具读取 swagger 或 openapi 字段，按对应版本的官方 JSON Schema 校验：Swagger 2.0 用 OpenAPI Initiative 仓库里的 schema，3.0（2024-10-18）、3.1（2026-08-03）、3.2（2026-08-30）用 spec.openapis.org 发布的版本。"
   - id: "privacy"
     question: "文档会上传吗？"
-    answer: "不会。解析和全部检查都在浏览器的 Web Worker 里完成，文档不会上传，也不会保存到浏览器存储。$ref 指向的网址不会被下载，在「其他文件」里添加的文件也只留在本页。提交文本或文件编辑、打开文件、点示例或「验证」且检查完成后，页面统计只记录工具名，并按有没有验证错误记 validate_success 或 validate_error。输入过程仍更新结果，但不记使用事件。恢复或初始渲染页面、相同验证结果、Worker 运行失败和过期回包不增加事件。统计不含文档内容。"
+    answer: "不会。解析和全部检查都在浏览器里完成（用 Web Worker，无法启动 Worker 时退回页面线程），文档不会上传，也不会保存到浏览器存储。$ref 指向的网址不会被下载，在「其他文件」里添加的文件也只留在本页。提交文本或文件编辑、打开文件、点示例或「验证」且检查完成后，页面统计只记录工具名，并按有没有验证错误记 validate_success 或 validate_error。输入过程仍更新结果，但不记使用事件。恢复或初始渲染页面、相同验证结果、Worker 运行失败和过期回包不增加事件。统计不含文档内容。"
   - id: "external-refs"
     question: "$ref 引用了别的文件，能一起检查吗？"
     answer: "能。可以一次打开多个文件或整个文件夹，也可以在「其他文件」里手动添加，文件名写成 $ref 里的路径（例如 schemas/pet.yaml）。引用会跨文件解析，问题标在原文所在的文件和行。没有提供的文件和网址引用列为提示。"
   - id: "errors-warnings"
     question: "错误和警告有什么区别？"
-    answer: "错误违反了规范的 MUST 或官方 schema，其他工具可能会拒收文档；警告是 SHOULD 规则和常见失误，例如示例与 schema 不符、组件没有被引用、服务器变量没有定义；提示列出没有检查的内容。"
+    answer: "错误违反了规范的 MUST 或官方 schema，其他工具可能会拒收文档；警告是 SHOULD 规则和常见失误，例如示例与 schema 不符、组件没有被引用、服务器变量没有定义；提示列出没有检查的内容和需要注意的值。"
   - id: "date-version"
     question: "info.version 写成 2024-01-15，为什么这里通过、别的工具却报错？"
     answer: "本工具按 YAML 1.2 core schema 读取 YAML，与 Redocly CLI、Spectral、swagger-parser 相同，所以不加引号的日期仍是字符串。按 YAML 1.1 时间戳规则读取的解析器会把它变成日期，schema 随后拒绝 info.version。给值加上引号（\"2024-01-15\"），各种解析器都会读成字符串。"
@@ -146,11 +146,11 @@ paths:
   <tbody>
     <tr><td>字段是否必填、是否允许、类型与结构</td><td>错误</td><td>各版本官方 JSON Schema</td></tr>
     <tr><td>3.1 / 3.2 的 Schema Object（如属性上的 <code>required: true</code>）</td><td>错误</td><td>JSON Schema 2020-12 元 schema</td></tr>
-    <tr><td><code>$ref</code> 能找到目标（含其他文件）</td><td>错误</td><td>Reference Object</td></tr>
+    <tr><td>本地 <code>$ref</code> 能找到目标（含其他已添加的文件）</td><td>错误</td><td>Reference Object</td></tr>
     <tr><td>路径模板与 <code>in: path</code> 参数一一对应、只差参数名的路径、重复参数、重复 operationId 与标签名</td><td>错误</td><td><a href="https://spec.openapis.org/oas/v3.1.1.html#paths-object" target="_blank" rel="noopener">Paths Object</a>、<a href="https://spec.openapis.org/oas/v3.1.1.html#parameter-object" target="_blank" rel="noopener">Parameter Object</a> 中的 MUST</td></tr>
     <tr><td>安全需求引用的方案已声明</td><td>错误</td><td><a href="https://spec.openapis.org/oas/v3.1.1.html#security-requirement-object" target="_blank" rel="noopener">Security Requirement Object</a></td></tr>
     <tr><td>服务器变量默认值在 enum 内</td><td>3.1 起为错误，3.0 为警告</td><td>3.0.4 写 SHOULD，3.1.1 写 MUST</td></tr>
-    <tr><td>布尔值 <code>exclusiveMinimum</code> / <code>exclusiveMaximum</code> 所在对象里没有 <code>minimum</code> / <code>maximum</code>（Schema Object；2.0 另含非 body 的 Parameter、Header 与 Items Object）</td><td>2.0 为错误，3.0 为警告</td><td>2.0 沿用 <a href="https://www.ietf.org/archive/id/draft-fge-json-schema-validation-00.txt" target="_blank" rel="noopener">JSON Schema draft 4</a>（§5.1.2.1：必须同时出现）；3.0 沿用的 <a href="https://datatracker.ietf.org/doc/html/draft-wright-json-schema-validation-00#section-5.3" target="_blank" rel="noopener">Wright draft 00</a> 删去了这条，单独写只是不起作用。官方 schema、Redocly CLI 2.57.0 与 Spectral 6.17.0 都不单独检查这一项</td></tr>
+    <tr><td>布尔值 <code>exclusiveMinimum</code> / <code>exclusiveMaximum</code> 所在对象里没有 <code>minimum</code> / <code>maximum</code>（Schema Object；2.0 另含非 body 的 Parameter、Header 与 Items Object）</td><td>2.0 为错误，3.0 为警告</td><td>2.0 沿用 <a href="https://www.ietf.org/archive/id/draft-fge-json-schema-validation-00.txt" target="_blank" rel="noopener">JSON Schema draft 4</a>（§5.1.2.1 与 §5.1.3.1：必须同时出现）；3.0 沿用的 <a href="https://datatracker.ietf.org/doc/html/draft-wright-json-schema-validation-00#section-5.3" target="_blank" rel="noopener">Wright draft 00</a> 删去了这条，单独写只是不起作用。官方 schema、Redocly CLI 2.57.0 与 Spectral 6.17.0 都不单独检查这一项</td></tr>
     <tr><td>示例与 schema 一致、组件未被引用、变量未定义或未使用、路径里带查询串、3.1 里的 <code>nullable</code></td><td>警告</td><td>规范的 SHOULD 与 Redocly、Spectral 也会报的常见失误</td></tr>
   </tbody>
 </table>
@@ -166,10 +166,10 @@ paths:
 <h2>限制</h2>
 <ul>
   <li>不做命名、描述等风格检查，团队规则请在本工具之后跑 Redocly CLI 或 Spectral。</li>
-  <li>不下载 <code>$ref</code> 里的网址，请把文件添加进来；锚点引用（<code>#name</code>）不检查。</li>
+  <li>不下载 <code>$ref</code> 里的网址，这类引用只列为提示、不检查；缺少的是本地文件时，请把文件添加进来。锚点引用（<code>#name</code>）不检查。</li>
   <li>非 JSON 媒体类型（如 <code>application/xml</code>）的字符串示例视为序列化后的原文，不与 schema 比对。</li>
-  <li>超大文档的示例检查 4 秒后停止并给出提示；超过 2 MB 的内容需点「校验」，文件合计超过 50 MB 不载入。</li>
-  <li>打开的文件超过 512 K 字符时，校验仍针对全文，但编辑框只读显示最多 300 行：把约 10 MB 文本整份放进编辑框会让页面卡住约半秒。点行号会把显示移到那一行；「复制全文」「下载」「编辑全文（较慢）」可取得完整内容。自己把这么多文本粘贴进编辑框，页面仍会卡顿。</li>
+  <li>超大文档的示例检查 4 秒后停止并给出提示；超过 2,097,152 个字符的内容需点「校验」，文件合计超过 50 MiB 不载入。</li>
+  <li>打开的文件超过 512 K 字符时，校验仍针对全文，但编辑框只读显示最多 300 行、49,152 个字符：把约 10 MB 文本整份放进编辑框会让页面卡住约半秒。点行号会把显示移到那一行；「复制全文」「下载」「编辑全文（较慢）」可取得完整内容。自己把这么多文本粘贴进编辑框，页面仍会卡顿。</li>
   <li>YAML 用 js-yaml 4.3.2 读取，遇到嵌套超过 100 层、合并键累计处理的映射和键超过 10,000 个、一个合并键列出超过 100 个映射的文档会停止，错误信息写明上限和行号。</li>
 </ul>
 <p>相关工具：用 <a href="/zh/tools/openapi-to-typescript/">OpenAPI 转 TypeScript 生成器</a>生成类型，用 <a href="/zh/tools/json-schema-validator/">JSON Schema 验证器</a>检查请求体，用 <a href="/zh/tools/yaml-validator/">YAML 语法验证器</a>定位缩进错误。</p>

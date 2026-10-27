@@ -1,0 +1,1599 @@
+{
+ "date": "2026-10-27",
+ "slug": "markdown-table-generator",
+ "files": [
+  "src/content/tools/markdown-table-generator/en.mdx",
+  "src/content/tools/markdown-table-generator/zh.mdx",
+  "src/content/tools/markdown-table-generator/ja.mdx",
+  "src/content/tools/markdown-table-generator/ko.mdx",
+  "src/components/tools/MarkdownTableGeneratorTool.astro",
+  "src/data/persistence.ts",
+  "src/data/network.ts",
+  "scripts/test-markdown-table-generator.mjs",
+  "scripts/test-markdown-table-generator.fixtures.json",
+  "scripts/test-markdown-table-generator.eaw.json"
+ ],
+ "counts": {
+  "languages": 4,
+  "statements": 91,
+  "decisions": {
+   "supported": 32,
+   "corrected": 26,
+   "qualified": 20,
+   "unverified": 13
+  }
+ },
+ "sources": [
+  {
+   "id": "gfm",
+   "url": "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)",
+   "fetched": "2026-10-28",
+   "note": "§4.10 Tables: pipes, escaped pipes inside inline spans, spaces trimmed, header must match delimiter, extra cells ignored, tables end at blank line/block."
+  },
+  {
+   "id": "fixture",
+   "path": "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)",
+   "note": "HTML recorded 2026-10-02 from GitHub/Gitee APIs, Zenn 0.5.4, Qiita 0.23.9.0; foreign cases include two-backslash pipe, code pipe, extra cells, full-width pipes, **注意：**ここ."
+  },
+  {
+   "id": "eaw",
+   "path": "scripts/test-markdown-table-generator.eaw.json (EastAsianWidth-18.0.0.txt)",
+   "note": "East Asian Width 18.0.0 ranges; test checks all 1,114,112 code points."
+  },
+  {
+   "id": "sw",
+   "path": "node_modules/markdownlint/node_modules/string-width (8.1.0); markdownlint 0.40.0 lib/md060.mjs",
+   "note": "markdownlint 0.40.0 MD060 imports string-width 8.1.0; test compares 8,000 random strings and runs MD055/56/58/60 on 200 random tables in both layouts."
+  },
+  {
+   "id": "node",
+   "command": "node -e firstBadUtf8/TextDecoder",
+   "note": "GBK 张 D5 C5 / 模 C4 A3; Shift_JIS 東 93 8C; EUC-KR 김 B1 E8 / 홍 C8 AB. Confirms byte 10 for 张/東/김 and silent mojibake for 模/홍."
+  }
+ ],
+ "statements": [
+  {
+   "id": "markdown-table-generator:en:1",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/content/tools/markdown-table-generator/en.mdx",
+   "line": 11,
+   "field": "faqItems[id=cell-line-break].answer",
+   "statement": "GFM cells hold one line; a real line break ends the row. Shift+Enter writes <br>; GitHub, Gitee, Qiita and Zenn render it as a line break; set Line breaks to Space if HTML is stripped.",
+   "decision": "supported",
+   "qualification": "与实现、GFM 规范或 2026-10-02 fixture 一致。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:en:2",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/content/tools/markdown-table-generator/en.mdx",
+   "line": 14,
+   "field": "faqItems[id=pipe].answer",
+   "statement": "Every unescaped | starts a new cell, even inside code. The tool writes \\| for a pipe and \\\\\\| for a backslash followed by a pipe; \\\\| is one cell on GitHub but two on micromark.",
+   "decision": "supported",
+   "qualification": "与实现、GFM 规范或 2026-10-02 fixture 一致。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:en:3",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/content/tools/markdown-table-generator/en.mdx",
+   "line": 17,
+   "field": "faqItems[id=paste-cells].answer",
+   "statement": "Pasting reads an HTML table (merged cells split, cell line breaks kept) or tab-separated text; empty cells, including an empty top-left cell, stay in place.",
+   "decision": "supported",
+   "qualification": "与实现、GFM 规范或 2026-10-02 fixture 一致。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:en:4",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/content/tools/markdown-table-generator/en.mdx",
+   "line": 20,
+   "field": "faqItems[id=column-alignment].answer",
+   "statement": "Pads each cell to the same display width; CJK characters and emoji count as 2 columns, as in UAX #11; proportional fonts never line up.",
+   "decision": "qualified",
+   "qualification": "CJK/emoji 宽度按 string-width 8.1.0 计算；UAX #11 只提供 East Asian Width。RGI emoji 计 2，裸文本符号（如 ☺）在 A 区且未勾选时计 1。比例字体「never」是绝对说法（实际为字形宽度不等，无法保证对齐），本轮未改文。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script",
+    "ToolLayout.astro:361"
+   ],
+   "primarySources": [
+    "src/data/persistence.ts:59",
+    "src/layouts/BaseLayout.astro:140",
+    "src/layouts/BaseLayout.astro:185",
+    "src/layouts/BaseLayout.astro:207"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:en:5",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/content/tools/markdown-table-generator/en.mdx",
+   "line": 23,
+   "field": "faqItems[id=privacy].answer",
+   "statement": "Editing, import and preview run in the browser; the table is not sent or saved. Only output options are saved in localStorage; Ctrl/⌘+L empties the table but keeps them. The page loads GA and AdSense; events hold the tool name and action. import_ plus format is recorded on a committed edit, format/header change, example or file action; live typing is not counted, and the same format and output is not counted again. paste_cells, align_, toolbar names, copy and download are recorded without table or clipboard content.",
+   "decision": "corrected",
+   "qualification": "原文「unchanged import results are not counted again」按 resultKey = format + output 判断；同一输出换格式会再计一次。已改为「the same format and output are not counted again」。Ctrl/⌘+L 只在焦点位于 .tool-widget 内时清空（ToolLayout.astro 361–375），FAQ 未限定焦点，记为 qualified。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script",
+    "ToolLayout.astro:361"
+   ],
+   "primarySources": [
+    "src/data/persistence.ts:59",
+    "src/layouts/BaseLayout.astro:140",
+    "src/layouts/BaseLayout.astro:185",
+    "src/layouts/BaseLayout.astro:207"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:zh:1",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/content/tools/markdown-table-generator/zh.mdx",
+   "line": 11,
+   "field": "faqItems[id=cell-line-break].answer",
+   "statement": "GFM 表格一行只能写在一行；真正的换行会截断该行。Shift+Enter 写入 <br>，GitHub、Gitee、Qiita、Zenn 显示为换行；渲染器过滤 HTML 时把换行设为空格。",
+   "decision": "supported",
+   "qualification": "与实现、GFM 规范或 2026-10-02 fixture 一致。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:zh:2",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/content/tools/markdown-table-generator/zh.mdx",
+   "line": 14,
+   "field": "faqItems[id=pipe].answer",
+   "statement": "未转义的 | 一律开始新单元格，代码里也一样。工具把单元格里的 | 写成 \\|，反斜杠加竖线写成 \\\\\\|；\\\\| 在 GitHub 是一个单元格，在 micromark 是两个。",
+   "decision": "supported",
+   "qualification": "与实现、GFM 规范或 2026-10-02 fixture 一致。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:zh:3",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/content/tools/markdown-table-generator/zh.mdx",
+   "line": 17,
+   "field": "faqItems[id=paste-cells].answer",
+   "statement": "粘贴时读取 HTML 表格（合并单元格拆开，单元格内换行保留），否则按制表符分隔的文本读取；空单元格（包括左上角）保持原位。",
+   "decision": "supported",
+   "qualification": "与实现、GFM 规范或 2026-10-02 fixture 一致。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:zh:4",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/content/tools/markdown-table-generator/zh.mdx",
+   "line": 20,
+   "field": "faqItems[id=column-alignment].answer",
+   "statement": "按显示宽度补空格；汉字、全角符号和 emoji 计 2 列（UAX #11）；比例字体里不会对齐。",
+   "decision": "qualified",
+   "qualification": "CJK/emoji 宽度按 string-width 8.1.0 计算；UAX #11 只提供 East Asian Width。RGI emoji 计 2，裸文本符号（如 ☺）在 A 区且未勾选时计 1。比例字体「never」是绝对说法（实际为字形宽度不等，无法保证对齐），本轮未改文。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script",
+    "ToolLayout.astro:361"
+   ],
+   "primarySources": [
+    "src/data/persistence.ts:59",
+    "src/layouts/BaseLayout.astro:140",
+    "src/layouts/BaseLayout.astro:185",
+    "src/layouts/BaseLayout.astro:207"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:zh:5",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/content/tools/markdown-table-generator/zh.mdx",
+   "line": 23,
+   "field": "faqItems[id=privacy].answer",
+   "statement": "编辑、导入和预览都在浏览器里；表格不上传也不保存。只有输出选项保存在 localStorage；Ctrl/⌘+L 清空表格但保留选项。页面加载 GA 与 AdSense；事件只含工具名和动作。提交导入框编辑、格式或表头变更、示例或文件导入成功后记 import_ 加格式；边输入边导入不计数，相同的格式和输出不重复计数。paste_cells、align_、工具栏按钮名、copy、download 也不含表格或剪贴板内容。",
+   "decision": "corrected",
+   "qualification": "原文「unchanged import results are not counted again」按 resultKey = format + output 判断；同一输出换格式会再计一次。已改为「the same format and output are not counted again」。Ctrl/⌘+L 只在焦点位于 .tool-widget 内时清空（ToolLayout.astro 361–375），FAQ 未限定焦点，记为 qualified。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script",
+    "ToolLayout.astro:361"
+   ],
+   "primarySources": [
+    "src/data/persistence.ts:59",
+    "src/layouts/BaseLayout.astro:140",
+    "src/layouts/BaseLayout.astro:185",
+    "src/layouts/BaseLayout.astro:207"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ja:1",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/content/tools/markdown-table-generator/ja.mdx",
+   "line": 11,
+   "field": "faqItems[id=cell-line-break].answer",
+   "statement": "GFM の表は 1 行を 1 行で書くため、実際の改行は行を途切れさせる。Shift+Enter で <br> を書き、GitHub、Qiita、Zenn で改行として表示される。HTML を除去するレンダラーでは「改行」をスペースにする。",
+   "decision": "supported",
+   "qualification": "与实现、GFM 规范或 2026-10-02 fixture 一致。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ja:2",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/content/tools/markdown-table-generator/ja.mdx",
+   "line": 14,
+   "field": "faqItems[id=pipe].answer",
+   "statement": "エスケープしていない | は `コード` の中でも新しいセルを始める。ツールは | を \\|、バックスラッシュ直後のパイプを \\\\\\| と書く。\\\\| は GitHub で 1 セル、micromark で 2 セル。",
+   "decision": "supported",
+   "qualification": "与实现、GFM 规范或 2026-10-02 fixture 一致。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ja:3",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/content/tools/markdown-table-generator/ja.mdx",
+   "line": 17,
+   "field": "faqItems[id=paste-cells].answer",
+   "statement": "HTML の表（結合セルは分割、セル内改行は保持）かタブ区切りテキストを読み、左上の空セルなど空欄も位置を保つ。",
+   "decision": "supported",
+   "qualification": "与实现、GFM 规范或 2026-10-02 fixture 一致。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ja:4",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/content/tools/markdown-table-generator/ja.mdx",
+   "line": 20,
+   "field": "faqItems[id=column-alignment].answer",
+   "statement": "表示幅でスペースを足す。漢字・かな・全角記号・絵文字は 2 桁（UAX #11）。プロポーショナルフォントではそろわない。",
+   "decision": "qualified",
+   "qualification": "CJK/emoji 宽度按 string-width 8.1.0 计算；UAX #11 只提供 East Asian Width。RGI emoji 计 2，裸文本符号（如 ☺）在 A 区且未勾选时计 1。比例字体「never」是绝对说法（实际为字形宽度不等，无法保证对齐），本轮未改文。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script",
+    "ToolLayout.astro:361"
+   ],
+   "primarySources": [
+    "src/data/persistence.ts:59",
+    "src/layouts/BaseLayout.astro:140",
+    "src/layouts/BaseLayout.astro:185",
+    "src/layouts/BaseLayout.astro:207"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ja:5",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/content/tools/markdown-table-generator/ja.mdx",
+   "line": 23,
+   "field": "faqItems[id=privacy].answer",
+   "statement": "編集・取り込み・プレビューはブラウザ内で、表は送信も保存もしない。localStorage に保存するのは出力オプションだけ。Ctrl/⌘+L で表は空になるがオプションは残る。GA と AdSense を読み込み、イベントはツール名と操作だけ。取り込み欄の編集確定、形式・見出しの変更、サンプル、ファイル読込で import_ と形式を記録し、入力中の自動取り込みと同一形式・同一出力の重複は数えない。paste_cells、align_、ツールバーのボタン名、copy、download も内容を含まない。",
+   "decision": "corrected",
+   "qualification": "原文「unchanged import results are not counted again」按 resultKey = format + output 判断；同一输出换格式会再计一次。已改为「the same format and output are not counted again」。Ctrl/⌘+L 只在焦点位于 .tool-widget 内时清空（ToolLayout.astro 361–375），FAQ 未限定焦点，记为 qualified。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script",
+    "ToolLayout.astro:361"
+   ],
+   "primarySources": [
+    "src/data/persistence.ts:59",
+    "src/layouts/BaseLayout.astro:140",
+    "src/layouts/BaseLayout.astro:185",
+    "src/layouts/BaseLayout.astro:207"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ko:1",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/content/tools/markdown-table-generator/ko.mdx",
+   "line": 11,
+   "field": "faqItems[id=cell-line-break].answer",
+   "statement": "GFM 표는 한 행을 한 줄에 쓰므로 실제 줄바꿈은 행을 끊는다. Shift+Enter는 <br>을 쓰고 GitHub·Gitee·Qiita·Zenn은 줄바꿈으로 표시한다. HTML을 걸러 내는 렌더러에서는 줄바꿈을 공백으로 바꾼다.",
+   "decision": "supported",
+   "qualification": "与实现、GFM 规范或 2026-10-02 fixture 一致。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ko:2",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/content/tools/markdown-table-generator/ko.mdx",
+   "line": 14,
+   "field": "faqItems[id=pipe].answer",
+   "statement": "이스케이프하지 않은 |는 `코드` 안에서도 새 셀을 시작한다. 도구는 |를 \\|로, 백슬래시 바로 뒤의 파이프를 \\\\\\|로 쓴다. \\\\|는 GitHub에서 셀 하나, micromark에서 셀 두 개다.",
+   "decision": "supported",
+   "qualification": "与实现、GFM 规范或 2026-10-02 fixture 一致。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ko:3",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/content/tools/markdown-table-generator/ko.mdx",
+   "line": 17,
+   "field": "faqItems[id=paste-cells].answer",
+   "statement": "HTML 표(병합 셀은 나누고 셀 안 줄바꿈은 유지) 또는 탭 구분 텍스트를 읽고, 왼쪽 위 빈 셀 같은 빈칸도 제자리에 남긴다.",
+   "decision": "supported",
+   "qualification": "与实现、GFM 规范或 2026-10-02 fixture 一致。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ko:4",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/content/tools/markdown-table-generator/ko.mdx",
+   "line": 20,
+   "field": "faqItems[id=column-alignment].answer",
+   "statement": "표시 폭으로 공백을 채운다. 한글·한자·전각 기호·이모지는 2칸(UAX #11). 비례 글꼴에서는 맞지 않는다.",
+   "decision": "qualified",
+   "qualification": "CJK/emoji 宽度按 string-width 8.1.0 计算；UAX #11 只提供 East Asian Width。RGI emoji 计 2，裸文本符号（如 ☺）在 A 区且未勾选时计 1。比例字体「never」是绝对说法（实际为字形宽度不等，无法保证对齐），本轮未改文。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script",
+    "ToolLayout.astro:361"
+   ],
+   "primarySources": [
+    "src/data/persistence.ts:59",
+    "src/layouts/BaseLayout.astro:140",
+    "src/layouts/BaseLayout.astro:185",
+    "src/layouts/BaseLayout.astro:207"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ko:5",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/content/tools/markdown-table-generator/ko.mdx",
+   "line": 23,
+   "field": "faqItems[id=privacy].answer",
+   "statement": "편집, 가져오기, 미리보기는 브라우저에서 처리하고 표는 전송·저장하지 않는다. localStorage에는 출력 옵션만 저장한다. Ctrl/⌘+L은 표를 비우고 옵션은 남긴다. GA와 AdSense를 불러오며 이벤트에는 도구 이름과 동작만 들어간다. 가져오기 칸 편집 확정, 형식·머리글 변경, 예시, 파일 열기로 import_와 형식을 기록하고 입력 중 자동 가져오기와 같은 형식·같은 출력의 중복은 세지 않는다. paste_cells, align_, 도구 모음 버튼 이름, copy, download도 내용을 포함하지 않는다.",
+   "decision": "corrected",
+   "qualification": "原文「unchanged import results are not counted again」按 resultKey = format + output 判断；同一输出换格式会再计一次。已改为「the same format and output are not counted again」。Ctrl/⌘+L 只在焦点位于 .tool-widget 内时清空（ToolLayout.astro 361–375），FAQ 未限定焦点，记为 qualified。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script",
+    "ToolLayout.astro:361"
+   ],
+   "primarySources": [
+    "src/data/persistence.ts:59",
+    "src/layouts/BaseLayout.astro:140",
+    "src/layouts/BaseLayout.astro:185",
+    "src/layouts/BaseLayout.astro:207"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:en:6",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/content/tools/markdown-table-generator/en.mdx",
+   "line": 30,
+   "field": "body:examples",
+   "statement": "Excel/CSV example: empty top-left cell, line break -> <br>, Q1 right; Markdown vs plain text; code-span pipe preserved; short row empty; extra cells kept and reported.",
+   "decision": "supported",
+   "qualification": "mdt-check examples 1–3 are recomputed by test-markdown-table-generator.mjs; 60 passed.",
+   "implementation": [
+    "mdt:engine"
+   ],
+   "primarySources": [
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:en:7",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/content/tools/markdown-table-generator/en.mdx",
+   "line": 98,
+   "field": "body:renderer-differences",
+   "statement": "GitHub/Gitee/Qiita/Zenn/micromark table rows for a\\|b, code pipe, x\\\\|y, <br>, **注意：**ここ.",
+   "decision": "supported",
+   "qualification": "Fixture recorded 2026-10-02; not re-fetched today. micromark column is computed by the test.",
+   "implementation": [
+    "mdt:engine"
+   ],
+   "primarySources": [
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:en:8",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/content/tools/markdown-table-generator/en.mdx",
+   "line": 110,
+   "field": "body:commonmark",
+   "statement": "A ** right after punctuation such as ： cannot close the emphasis; wrap the whole phrase or add a space after the closing **.",
+   "decision": "corrected",
+   "qualification": "原文写「** next to full-width punctuation does not open emphasis」，机制不准：opener 可以打开，closing ** 在标点后不是 right-flanking，不能闭合。已改为不可闭合，并给出 **注意**：ここ / closing ** 后空格两种写法。",
+   "implementation": [
+    "mdt:engine"
+   ],
+   "primarySources": [
+    "CommonMark 0.30 spec §6.2 emphasis (flanking rules); fixture 2026-10-02"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:en:9",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/content/tools/markdown-table-generator/en.mdx",
+   "line": 114,
+   "field": "body:width",
+   "statement": "Aligned columns pads to the widest cell; CJK/emoji 2, combining marks 0; UAX #11; string-width 8.1.0; MD055/56/58/60 on 200 random tables; EAW 18.0.0.",
+   "decision": "qualified",
+   "qualification": "宽度的实现与测试一致（string-width 8.1.0、MD060、200 表）；「pads to the widest cell」在列宽小于分隔行下限（3/4/5 字符）时不成立；emoji 归因见 FAQ。正文未改。",
+   "implementation": [
+    "mdt:engine"
+   ],
+   "primarySources": [
+    "scripts/test-markdown-table-generator.eaw.json (EastAsianWidth-18.0.0.txt)",
+    "node_modules/markdownlint/node_modules/string-width (8.1.0); markdownlint 0.40.0 lib/md060.mjs",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:en:10",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/content/tools/markdown-table-generator/en.mdx",
+   "line": 130,
+   "field": "body:competitor-tablesgenerator",
+   "statement": "tablesgenerator.com posts Paste table data to its server, drops the empty first cell and splits a two-line cell into two rows.",
+   "decision": "unverified",
+   "qualification": "2026-10-02 observation; not re-run 2026-10-28.",
+   "implementation": [],
+   "primarySources": [
+    "AGENTS.md 2026-10-02 markdown-table-generator entry"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:en:11",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/content/tools/markdown-table-generator/en.mdx",
+   "line": 131,
+   "field": "body:competitor-tableconvert",
+   "statement": "tableconvert.com drops the empty first cell and leaves a|b unescaped.",
+   "decision": "unverified",
+   "qualification": "2026-10-02 observation; not re-run 2026-10-28.",
+   "implementation": [],
+   "primarySources": [
+    "AGENTS.md 2026-10-02 markdown-table-generator entry"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:en:12",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/content/tools/markdown-table-generator/en.mdx",
+   "line": 132,
+   "field": "body:competitor-tabletomarkdown",
+   "statement": "tabletomarkdown.com keeps columns and escapes | and *, but not _.",
+   "decision": "unverified",
+   "qualification": "2026-10-02 observation; not re-run 2026-10-28.",
+   "implementation": [],
+   "primarySources": [
+    "AGENTS.md 2026-10-02 markdown-table-generator entry"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:en:13",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/content/tools/markdown-table-generator/en.mdx",
+   "line": 133,
+   "field": "body:competitor-padding",
+   "statement": "All three pad by character count, so 東京 comes out two columns too wide.",
+   "decision": "unverified",
+   "qualification": "tablesgenerator/tabletomarkdown 的字符数补空格有 2026-10-02 记录；tableconvert 的补空格方式未在该记录中，故整句标 unverified，未改日期与措辞。",
+   "implementation": [],
+   "primarySources": [
+    "AGENTS.md 2026-10-02 markdown-table-generator entry"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:en:14",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/content/tools/markdown-table-generator/en.mdx",
+   "line": 137,
+   "field": "body:limits",
+   "statement": "No merged cells; inline Markdown only; spaces trimmed and tabs become spaces; grid first 1,000 rows; first Markdown table/first <table>; import errors with line/column; CSV quote note.",
+   "decision": "supported",
+   "qualification": "Spec §4.10 (no colspan/rowspan, block elements not allowed, spaces trimmed); component GRID_LIMIT=1000, parseMarkdownTable, htmlTableRows, jsonSyntaxError/lineCol.",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:en:15",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/content/tools/markdown-table-generator/en.mdx",
+   "line": 143,
+   "field": "body:file-size",
+   "statement": "Open file/drop accepts one file of up to 10 MiB, read as UTF-8.",
+   "decision": "corrected",
+   "qualification": "原文写 10 MB；FILE_LIMIT = 10 * 1024 * 1024 = 10 MiB（组件 1824 行）。已改为 10 MiB 并写明字节数。",
+   "implementation": [
+    "mdt:script"
+   ],
+   "primarySources": [
+    "src/components/tools/MarkdownTableGeneratorTool.astro:1824"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:en:16",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/content/tools/markdown-table-generator/en.mdx",
+   "line": 143,
+   "field": "body:file-encoding",
+   "statement": "A file in another encoding is not opened; byte 10 example.",
+   "decision": "corrected",
+   "qualification": "decodeTextFile 只拒绝无效 UTF-8 / NUL / UTF-16；合法 UTF-8 的旧编码会按别的字符打开（GBK 模 C4 A3 → ģ；EUC-KR 홍 C8 AB → ȫ；本机 Node 复算）。已改为「通常」在第一个无效字节拒绝，加两种字节 10 示例与旧编码反例。",
+   "implementation": [
+    "mdt:script"
+   ],
+   "primarySources": [
+    "src/components/tools/MarkdownTableGeneratorTool.astro:1788",
+    "src/components/tools/MarkdownTableGeneratorTool.astro:1807"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:zh:6",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/content/tools/markdown-table-generator/zh.mdx",
+   "line": 30,
+   "field": "body:examples",
+   "statement": "Excel/CSV example and plain-text example.",
+   "decision": "supported",
+   "qualification": "mdt-check examples 1–2 由 test 复算；60 passed。",
+   "implementation": [
+    "mdt:engine"
+   ],
+   "primarySources": [
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:zh:7",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/content/tools/markdown-table-generator/zh.mdx",
+   "line": 44,
+   "field": "body:fullwidth",
+   "statement": "GFM only accepts ASCII |; a full-width ｜ table renders as plain text on GitHub/Gitee; import reads it with ASCII pipes; only delimiter-row full-width dashes/colon are converted.",
+   "decision": "supported",
+   "qualification": "Spec §4.10 uses ASCII pipes; fixture 'full-width pipes' records p/plain text for GitHub/Gitee/Zenn/Qiita; parseFullwidthTable 组件 785–798.",
+   "implementation": [
+    "mdt:engine"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:zh:8",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/content/tools/markdown-table-generator/zh.mdx",
+   "line": 82,
+   "field": "body:renderer-differences",
+   "statement": "GitHub/Gitee/Qiita/Zenn vs micromark table rows.",
+   "decision": "supported",
+   "qualification": "Fixture 2026-10-02; not re-fetched today.",
+   "implementation": [
+    "mdt:engine"
+   ],
+   "primarySources": [
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:zh:9",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/content/tools/markdown-table-generator/zh.mdx",
+   "line": 93,
+   "field": "body:commonmark",
+   "statement": "** after ： cannot start or end emphasis; **注意**：这里 works.",
+   "decision": "corrected",
+   "qualification": "原文「不能开始或结束」不准确：opener 可打开，closing ** 在标点后不能闭合。已改为「不能结束强调」，给出 **注意**：这里 与结尾 ** 后空格两种写法。",
+   "implementation": [],
+   "primarySources": [
+    "CommonMark 0.30 spec §6.2 emphasis (flanking rules); fixture 2026-10-02"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:zh:10",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/content/tools/markdown-table-generator/zh.mdx",
+   "line": 97,
+   "field": "body:width",
+   "statement": "Display-width padding; CJK/emoji 2; UAX #11; string-width 8.1.0; MD060; 200 tables; EAW 18.0.0.",
+   "decision": "qualified",
+   "qualification": "实现与测试一致；emoji 归因与「最宽单元格」下限同 en，正文未改。",
+   "implementation": [
+    "mdt:engine"
+   ],
+   "primarySources": [
+    "scripts/test-markdown-table-generator.eaw.json (EastAsianWidth-18.0.0.txt)",
+    "node_modules/markdownlint/node_modules/string-width (8.1.0); markdownlint 0.40.0 lib/md060.mjs",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:zh:11",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/content/tools/markdown-table-generator/zh.mdx",
+   "line": 103,
+   "field": "body:competitor-tableconvert",
+   "statement": "tableconvert.com (cn.bing first) drops the empty first cell and leaves a|b unescaped.",
+   "decision": "unverified",
+   "qualification": "2026-10-02 observation; not re-run.",
+   "implementation": [],
+   "primarySources": [
+    "AGENTS.md 2026-10-02"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:zh:12",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/content/tools/markdown-table-generator/zh.mdx",
+   "line": 104,
+   "field": "body:competitor-tablesgenerator",
+   "statement": "tablesgenerator.com posts to its server, drops the empty cell and splits the two-line cell.",
+   "decision": "unverified",
+   "qualification": "2026-10-02 observation; not re-run.",
+   "implementation": [],
+   "primarySources": [
+    "AGENTS.md 2026-10-02"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:zh:13",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/content/tools/markdown-table-generator/zh.mdx",
+   "line": 105,
+   "field": "body:competitor-padding",
+   "statement": "Both pad by character count; 東京 is two columns too wide.",
+   "decision": "unverified",
+   "qualification": "tablesgenerator 的字符数补空格有记录；tableconvert 未记录补空格方式，故整句 unverified。",
+   "implementation": [],
+   "primarySources": [
+    "AGENTS.md 2026-10-02"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:zh:14",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/content/tools/markdown-table-generator/zh.mdx",
+   "line": 107,
+   "field": "body:limits",
+   "statement": "No merged cells; inline only; spaces/tabs; grid 1,000; first table; error behavior; CSV quote.",
+   "decision": "supported",
+   "qualification": "同 en，组件与 GFM §4.10。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:zh:15",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/content/tools/markdown-table-generator/zh.mdx",
+   "line": 115,
+   "field": "body:file-size",
+   "statement": "Up to 10 MiB (10 × 1024 × 1024 bytes).",
+   "decision": "corrected",
+   "qualification": "原文 10 MB；FILE_LIMIT 为 10 MiB。",
+   "implementation": [
+    "mdt:script"
+   ],
+   "primarySources": [
+    "src/components/tools/MarkdownTableGeneratorTool.astro:1824"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:zh:16",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/content/tools/markdown-table-generator/zh.mdx",
+   "line": 115,
+   "field": "body:file-encoding",
+   "statement": "Other encodings are refused; byte 10 example.",
+   "decision": "corrected",
+   "qualification": "同 en：只按字节拒绝无效 UTF-8；GBK 模 C4 A3 → ģ 会按别的字符打开。已加「通常」与反例。",
+   "implementation": [
+    "mdt:script"
+   ],
+   "primarySources": [
+    "src/components/tools/MarkdownTableGeneratorTool.astro:1788"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ja:6",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/content/tools/markdown-table-generator/ja.mdx",
+   "line": 30,
+   "field": "body:examples",
+   "statement": "○× table and ambiguous-width variant.",
+   "decision": "supported",
+   "qualification": "mdt-check examples 1–2 由 test 复算；○ × 为 EAW A，ambiguousWide 输出由 buildMarkdown 复算。",
+   "implementation": [
+    "mdt:engine"
+   ],
+   "primarySources": [
+    "scripts/test-markdown-table-generator.eaw.json (EastAsianWidth-18.0.0.txt)",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ja:7",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/content/tools/markdown-table-generator/ja.mdx",
+   "line": 56,
+   "field": "body:fullwidth",
+   "statement": "Full-width ｜/ー tables are plain text on GitHub/Qiita/Zenn; import reads them as ASCII; only delimiter row dashes/colon are converted.",
+   "decision": "supported",
+   "qualification": "Fixture 'full-width pipes'; parseFullwidthTable 组件 785–798.",
+   "implementation": [
+    "mdt:engine"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ja:8",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/content/tools/markdown-table-generator/ja.mdx",
+   "line": 75,
+   "field": "body:renderer-differences",
+   "statement": "Qiita 0.23.9.0 / Zenn 0.5.4 / GitHub / Gitee records; \\|, <br>, x\\\\|y, **注意：**ここ.",
+   "decision": "supported",
+   "qualification": "Fixture 2026-10-02; not re-fetched today.",
+   "implementation": [
+    "mdt:engine"
+   ],
+   "primarySources": [
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ja:9",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/content/tools/markdown-table-generator/ja.mdx",
+   "line": 84,
+   "field": "body:width",
+   "statement": "Aligned columns width; CJK 2; EAW 18.0.0; string-width 8.1.0; MD060; 200 tables.",
+   "decision": "qualified",
+   "qualification": "实现与测试一致；emoji 归因与「最寬セル」下限同 en，正文未改。",
+   "implementation": [
+    "mdt:engine"
+   ],
+   "primarySources": [
+    "scripts/test-markdown-table-generator.eaw.json (EastAsianWidth-18.0.0.txt)",
+    "node_modules/markdownlint/node_modules/string-width (8.1.0); markdownlint 0.40.0 lib/md060.mjs",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ja:10",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/content/tools/markdown-table-generator/ja.mdx",
+   "line": 90,
+   "field": "body:competitor-notepm",
+   "statement": "NotePM keeps empty cells and Japanese widths but does not escape a|b; the row gains a cell and b is hidden on GitHub.",
+   "decision": "unverified",
+   "qualification": "2026-10-02 observation; not re-run.",
+   "implementation": [],
+   "primarySources": [
+    "AGENTS.md 2026-10-02"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ja:11",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/content/tools/markdown-table-generator/ja.mdx",
+   "line": 91,
+   "field": "body:competitor-tableconvert",
+   "statement": "tableconvert.com drops the empty top-left cell; a|b unescaped.",
+   "decision": "unverified",
+   "qualification": "2026-10-02 observation; not re-run.",
+   "implementation": [],
+   "primarySources": [
+    "AGENTS.md 2026-10-02"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ja:12",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/content/tools/markdown-table-generator/ja.mdx",
+   "line": 92,
+   "field": "body:competitor-tablesgenerator",
+   "statement": "tablesgenerator.com POSTs the text and splits a two-line cell into two rows.",
+   "decision": "unverified",
+   "qualification": "2026-10-02 observation; not re-run.",
+   "implementation": [],
+   "primarySources": [
+    "AGENTS.md 2026-10-02"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ja:13",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/content/tools/markdown-table-generator/ja.mdx",
+   "line": 94,
+   "field": "body:limits",
+   "statement": "No merged cells; inline only; spaces/tabs; grid 1,000; first table; errors; CSV quote.",
+   "decision": "supported",
+   "qualification": "同 en。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ja:14",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/content/tools/markdown-table-generator/ja.mdx",
+   "line": 102,
+   "field": "body:file-size",
+   "statement": "Up to 10 MiB.",
+   "decision": "corrected",
+   "qualification": "原文 10 MB；FILE_LIMIT 10 MiB。",
+   "implementation": [
+    "mdt:script"
+   ],
+   "primarySources": [
+    "src/components/tools/MarkdownTableGeneratorTool.astro:1824"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ja:15",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/content/tools/markdown-table-generator/ja.mdx",
+   "line": 102,
+   "field": "body:file-encoding",
+   "statement": "Other encodings are not opened; Shift_JIS 東 at byte 10.",
+   "decision": "corrected",
+   "qualification": "同 en：只按字节拒绝；GBK 模 C4 A3 → ģ 反例。",
+   "implementation": [
+    "mdt:script"
+   ],
+   "primarySources": [
+    "src/components/tools/MarkdownTableGeneratorTool.astro:1788"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ko:6",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/content/tools/markdown-table-generator/ko.mdx",
+   "line": 30,
+   "field": "body:examples",
+   "statement": "Work-status table with a two-line cell.",
+   "decision": "supported",
+   "qualification": "mdt-check example 由 test 复算。",
+   "implementation": [
+    "mdt:engine"
+   ],
+   "primarySources": [
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ko:7",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/content/tools/markdown-table-generator/ko.mdx",
+   "line": 42,
+   "field": "body:code-pipe",
+   "statement": "A pipe inside a code span must be escaped; without a backslash GitHub/Qiita/Zenn/micromark split the cell.",
+   "decision": "supported",
+   "qualification": "Fixture 'pipe inside code without a backslash' (GitHub/Gitee/Zenn/Qiita end the cell at `a`); micromark same.",
+   "implementation": [
+    "mdt:engine"
+   ],
+   "primarySources": [
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)",
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ko:8",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/content/tools/markdown-table-generator/ko.mdx",
+   "line": 61,
+   "field": "body:plain-text",
+   "statement": "Markdown vs plain text: 5*3*2 -> 5\\*3\\*2, _id -> \\_id, user_id unchanged; note counts differing cells.",
+   "decision": "supported",
+   "qualification": "escapeInline 组件 519–547; checkMarkdownCells.",
+   "implementation": [
+    "mdt:engine"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:ko:9",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/content/tools/markdown-table-generator/ko.mdx",
+   "line": 65,
+   "field": "body:renderer-differences",
+   "statement": "GitHub/Gitee/Qiita/Zenn/micromark table rows; extra cells hidden.",
+   "decision": "supported",
+   "qualification": "Fixture 2026-10-02; extra cells ignored per GFM §4.10.",
+   "implementation": [
+    "mdt:engine"
+   ],
+   "primarySources": [
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)",
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ko:10",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/content/tools/markdown-table-generator/ko.mdx",
+   "line": 74,
+   "field": "body:width",
+   "statement": "Aligned width; Hangul/Hanja/Kana/full-width/emoji 2; EAW 18.0.0; string-width 8.1.0; MD060; 200 tables.",
+   "decision": "qualified",
+   "qualification": "实现与测试一致；emoji 归因与「가장 넓은 셀」下限同 en，正文未改。",
+   "implementation": [
+    "mdt:engine"
+   ],
+   "primarySources": [
+    "scripts/test-markdown-table-generator.eaw.json (EastAsianWidth-18.0.0.txt)",
+    "node_modules/markdownlint/node_modules/string-width (8.1.0); markdownlint 0.40.0 lib/md060.mjs",
+    "scripts/test-markdown-table-generator.fixtures.json (recorded 2026-10-02)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ko:11",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/content/tools/markdown-table-generator/ko.mdx",
+   "line": 82,
+   "field": "body:competitor-markdowntoword",
+   "statement": "markdowntoword.org keeps empty cells and escapes |/*/_, but does not pad and writes :--- for every column.",
+   "decision": "unverified",
+   "qualification": "2026-10-02 observation; not re-run.",
+   "implementation": [],
+   "primarySources": [
+    "AGENTS.md 2026-10-02"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ko:12",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/content/tools/markdown-table-generator/ko.mdx",
+   "line": 83,
+   "field": "body:competitor-tableconvert",
+   "statement": "tableconvert.com drops the empty top-left cell; a|b unescaped.",
+   "decision": "unverified",
+   "qualification": "2026-10-02 observation; not re-run.",
+   "implementation": [],
+   "primarySources": [
+    "AGENTS.md 2026-10-02"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ko:13",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/content/tools/markdown-table-generator/ko.mdx",
+   "line": 84,
+   "field": "body:competitor-tablesgenerator",
+   "statement": "tablesgenerator.com POSTs text and splits a two-line cell.",
+   "decision": "unverified",
+   "qualification": "2026-10-02 observation; not re-run.",
+   "implementation": [],
+   "primarySources": [
+    "AGENTS.md 2026-10-02"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ko:14",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/content/tools/markdown-table-generator/ko.mdx",
+   "line": 88,
+   "field": "body:limits",
+   "statement": "No merged cells; inline only; spaces/tabs; grid 1,000; first table; errors; CSV quote.",
+   "decision": "supported",
+   "qualification": "同 en。",
+   "implementation": [
+    "mdt:engine",
+    "mdt:script"
+   ],
+   "primarySources": [
+    "https://raw.githubusercontent.com/github/cmark-gfm/master/test/spec.txt (§4.10 Tables, fetched 2026-10-28)"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ko:15",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/content/tools/markdown-table-generator/ko.mdx",
+   "line": 94,
+   "field": "body:file-size",
+   "statement": "Up to 10 MiB.",
+   "decision": "corrected",
+   "qualification": "原文 10MB；FILE_LIMIT 10 MiB。",
+   "implementation": [
+    "mdt:script"
+   ],
+   "primarySources": [
+    "src/components/tools/MarkdownTableGeneratorTool.astro:1824"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:ko:16",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/content/tools/markdown-table-generator/ko.mdx",
+   "line": 94,
+   "field": "body:file-encoding",
+   "statement": "Other encodings are not opened; EUC-KR 김 at byte 10.",
+   "decision": "corrected",
+   "qualification": "同 en：只按字节拒绝；EUC-KR 홍 C8 AB → ȫ（Node 复算）会按别的字符打开。已加「보통」与反例。",
+   "implementation": [
+    "mdt:script"
+   ],
+   "primarySources": [
+    "src/components/tools/MarkdownTableGeneratorTool.astro:1788"
+   ]
+  },
+  {
+   "id": "markdown-table-generator:en:17",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 44,
+   "field": "visible:fileTooBig",
+   "statement": "The file was not opened: larger than 10 MiB.",
+   "decision": "corrected",
+   "qualification": "原文 10 MB；FILE_LIMIT 10 MiB（1824 行）。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:44"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:en:18",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 43,
+   "field": "visible:fileNotUtf8",
+   "statement": "Message infers the file is in another encoding when a byte is not UTF-8.",
+   "decision": "qualified",
+   "qualification": "无效 UTF-8 也可能来自损坏或截断的文件；已改为「this is not UTF-8 at that byte（another encoding ...?）」，保留位置与重存建议。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:43"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:en:19",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 76,
+   "field": "visible:tips.import:size",
+   "statement": "Open file or drop accepts 10 MiB or less.",
+   "decision": "corrected",
+   "qualification": "原文 10 MB。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:76"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:en:20",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 76,
+   "field": "visible:tips.import:encoding",
+   "statement": "A file in another encoding is refused at the first invalid byte; legacy text can be valid UTF-8 and open as other characters.",
+   "decision": "corrected",
+   "qualification": "原文称 other encoding is refused，绝对化；已加「when a byte is not valid UTF-8」与旧编码可读反例。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:76"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:en:21",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 74,
+   "field": "visible:tips.grid",
+   "statement": "Enter/Shift+Enter, IME Enter does not move, grid 1,000 rows, alignment selects.",
+   "decision": "qualified",
+   "qualification": "1,000 行时在最后一行按 Enter 不再新增（组件 1534–1535）；提示未写该例外，steps 亦未改（本批禁止改 steps）。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:74"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:en:22",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 75,
+   "field": "visible:tips.actions",
+   "statement": "Sort numbers/text, empty last, transpose resets alignment, undo 50 steps, clear 3×3.",
+   "decision": "qualified",
+   "qualification": "Undo 还会回退 Enter 新增行与 Ctrl/⌘+L（pushUndo 在 1536、1997 行），提示只列按钮/粘贴/导入；不影响操作结果。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:75"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:en:23",
+   "slug": "markdown-table-generator",
+   "language": "en",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 78,
+   "field": "visible:tips.style/cell/breaks/ambiguous/output",
+   "statement": "Styles, plain-text escapes, <br>, ambiguous width, preview only <br> and file table.md.",
+   "decision": "supported",
+   "qualification": "与 buildMarkdown / escapeInline / options() / renderPreview / download 一致。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:78"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:zh:17",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 119,
+   "field": "visible:fileTooBig",
+   "statement": "文件超过 10 MiB。",
+   "decision": "corrected",
+   "qualification": "原文 10 MB。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:119"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:zh:18",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 118,
+   "field": "visible:fileNotUtf8",
+   "statement": "Message infers other encoding.",
+   "decision": "qualified",
+   "qualification": "已改为「这个位置不是 UTF-8（文件可能用的是 GBK、Big5 或 Windows-1252）」。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:118"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:zh:19",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 149,
+   "field": "visible:tips.import:size",
+   "statement": "不超过 10 MiB。",
+   "decision": "corrected",
+   "qualification": "原文 10 MB。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:149"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:zh:20",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 149,
+   "field": "visible:tips.import:encoding",
+   "statement": "Bytes not declared encoding; legacy text may open as other characters.",
+   "decision": "corrected",
+   "qualification": "原文「其他编码的文件不会打开」绝对化。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:149"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:zh:21",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 147,
+   "field": "visible:tips.grid",
+   "statement": "Enter 跳格、IME 不跳、网格 1,000 行、对齐下拉框。",
+   "decision": "qualified",
+   "qualification": "1,000 行末行 Enter 不再新增（1534–1535）；steps 未改。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:147"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:zh:22",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 148,
+   "field": "visible:tips.actions",
+   "statement": "排序、空值最后、行列互换重置对齐、撤销 50 步、清空 3×3。",
+   "decision": "qualified",
+   "qualification": "撤销也回退 Enter 新增行与 Ctrl/⌘+L；提示未列。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:148"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:zh:23",
+   "slug": "markdown-table-generator",
+   "language": "zh",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 151,
+   "field": "visible:tips.style/cell/breaks/ambiguous/output",
+   "statement": "样式、纯文本转义、<br>、宽度不定、预览只显示 <br>、文件名 table.md。",
+   "decision": "supported",
+   "qualification": "与实现一致。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:151"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:ja:16",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 192,
+   "field": "visible:fileTooBig",
+   "statement": "10 MiB を超えています。",
+   "decision": "corrected",
+   "qualification": "原文 10 MB。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:192"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:ja:17",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 191,
+   "field": "visible:fileNotUtf8",
+   "statement": "Message infers other encoding.",
+   "decision": "qualified",
+   "qualification": "已改为「この位置は UTF-8 ではありません（Shift_JIS などの別の文字コード？）」。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:191"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:ja:18",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 222,
+   "field": "visible:tips.import:size",
+   "statement": "10 MiB 以下。",
+   "decision": "corrected",
+   "qualification": "原文 10 MB。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:222"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:ja:19",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 222,
+   "field": "visible:tips.import:encoding",
+   "statement": "Bytes checked; legacy text may open as other characters.",
+   "decision": "corrected",
+   "qualification": "原文「別の文字コードのファイルは開きません」绝对化。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:222"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:ja:20",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 220,
+   "field": "visible:tips.grid",
+   "statement": "Enter/Shift+Enter、IME の Enter は移動しない、1,000 行、配置。",
+   "decision": "qualified",
+   "qualification": "1,000 行末行の Enter は行を追加しない（1534–1535）；steps 未改。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:220"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:ja:21",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 221,
+   "field": "visible:tips.actions",
+   "statement": "数値/文字列の並べ替え、空を最後、入れ替えで配置リセット、元に戻す 50 回、クリア 3×3。",
+   "decision": "qualified",
+   "qualification": "元に戻すは Enter の行追加と Ctrl/⌘+L も戻す（1536、1997）；ヒントは列挙していない。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:221"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:ja:22",
+   "slug": "markdown-table-generator",
+   "language": "ja",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 224,
+   "field": "visible:tips.style/cell/breaks/ambiguous/output",
+   "statement": "レイアウト・セル内容・改行・曖昧幅・プレビューは <br> のみ・table.md。",
+   "decision": "supported",
+   "qualification": "実装と一致。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:224"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:ko:17",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 265,
+   "field": "visible:fileTooBig",
+   "statement": "10MiB보다 큽니다.",
+   "decision": "corrected",
+   "qualification": "원문 10MB.",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:265"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:ko:18",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 264,
+   "field": "visible:fileNotUtf8",
+   "statement": "Message infers other encoding.",
+   "decision": "qualified",
+   "qualification": "已改为「이 위치는 UTF-8이 아닙니다(EUC-KR, CP949 등 다른 인코딩?)」。",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:264"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:ko:19",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 295,
+   "field": "visible:tips.import:size",
+   "statement": "10MiB 이하.",
+   "decision": "corrected",
+   "qualification": "원문 10MB.",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:295"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:ko:20",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 295,
+   "field": "visible:tips.import:encoding",
+   "statement": "Bytes checked; legacy text may open as other characters.",
+   "decision": "corrected",
+   "qualification": "원문「다른 인코딩의 파일은 열지 않고」绝对化.",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:295"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:ko:21",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 293,
+   "field": "visible:tips.grid",
+   "statement": "Enter/Shift+Enter, IME Enter no move, 1,000 rows, alignment.",
+   "decision": "qualified",
+   "qualification": "1,000행 마지막 행 Enter는 행을 추가하지 않음(1534–1535); steps 미변경.",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:293"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:ko:22",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 294,
+   "field": "visible:tips.actions",
+   "statement": "Sort, empty last, transpose resets, undo 50, clear 3×3.",
+   "decision": "qualified",
+   "qualification": "Undo는 Enter 행 추가와 Ctrl/⌘+L도 되돌림(1536, 1997); 팁에 없음.",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:294"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "markdown-table-generator:ko:23",
+   "slug": "markdown-table-generator",
+   "language": "ko",
+   "file": "src/components/tools/MarkdownTableGeneratorTool.astro",
+   "line": 297,
+   "field": "visible:tips.style/cell/breaks/ambiguous/output",
+   "statement": "Layout, cell text, breaks, ambiguous, preview only <br>, table.md.",
+   "decision": "supported",
+   "qualification": "구현과 일치.",
+   "implementation": [
+    "MarkdownTableGeneratorTool.astro:297"
+   ],
+   "primarySources": []
+  }
+ ]
+}

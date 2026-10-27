@@ -1,0 +1,1002 @@
+{
+ "date": "2026-10-27",
+ "slug": "json-formatter",
+ "files": [
+  "src/content/tools/json-formatter/en.mdx",
+  "src/content/tools/json-formatter/zh.mdx",
+  "src/content/tools/json-formatter/ja.mdx",
+  "src/content/tools/json-formatter/ko.mdx",
+  "src/components/tools/JsonFormatterTool.astro",
+  "src/components/tools/json-formatter-engine.js",
+  "src/components/tools/json-formatter-run.js"
+ ],
+ "counts": {
+  "languages": 4,
+  "files": 4,
+  "statements": 56,
+  "decisions": {
+   "supported": 29,
+   "qualified": 11,
+   "corrected": 13,
+   "unverified": 3
+  }
+ },
+ "statements": [
+  {
+   "id": "json-formatter:en:faqItems[id=privacy].answer:1",
+   "slug": "json-formatter",
+   "language": "en",
+   "file": "src/content/tools/json-formatter/en.mdx",
+   "line": 11,
+   "field": "faqItems[id=privacy].answer",
+   "statement": "Parsing and formatting run in a Web Worker in this browser tab; the tool does not upload your JSON; settings and eligible input are saved in local storage; 50 KB; 200,000 characters; Clear or Ctrl/⌘+L removes saved input; the page loads Google Analytics and AdSense; format and minify are recorded only after success and deduplicated; typing, restoration, invalid JSON, worker failures, cancellation and stale results are silent; events carry the tool name and action only.",
+   "decision": "qualified",
+   "qualification": "50 KB = JSON 文本长度上限（ToolLayout MAX_ENTRY 51200）；200,000 为 UTF-16 length；GA/AdSense 依 ToolLayout 默认 input 策略。",
+   "implementation": [
+    "jf:save",
+    "jf:run",
+    "jf:track",
+    "tool:ztPersist"
+   ],
+   "primarySources": [
+    "src/data/persistence.ts",
+    "src/layouts/ToolLayout.astro#ztPersist"
+   ]
+  },
+  {
+   "id": "json-formatter:en:faqItems[id=numbers].answer:2",
+   "slug": "json-formatter",
+   "language": "en",
+   "file": "src/content/tools/json-formatter/en.mdx",
+   "line": 14,
+   "field": "faqItems[id=numbers].answer",
+   "statement": "JSON.parse stores numbers as 64-bit doubles; integers above 2^53 − 1 are not all storable; 1830000000000000001 becomes 1830000000000000000; JSON.stringify writes 1.0 as 1 and 1e2 as 100; this tool keeps the digits and lists numbers JavaScript would change.",
+   "decision": "supported",
+   "qualification": "实测 Node：1830000000000000001 → 1830000000000000000；1845223349876512769 → 1845223349876512800（zh）。",
+   "implementation": [
+    "jf:numberChange",
+    "jf:serialize"
+   ],
+   "primarySources": [
+    "https://www.rfc-editor.org/rfc/rfc8259#section-6"
+   ]
+  },
+  {
+   "id": "json-formatter:en:faqItems[id=non-ascii].answer:3",
+   "slug": "json-formatter",
+   "language": "en",
+   "file": "src/content/tools/json-formatter/en.mdx",
+   "line": 17,
+   "field": "faqItems[id=non-ascii].answer",
+   "statement": "python3 -m json.tool escapes every character outside printable ASCII by default; Kraków becomes Krak\\u00f3w; --no-ensure-ascii since Python 3.9; this tool writes characters as they are; Escape non-ASCII gives ASCII-only output.",
+   "decision": "corrected",
+   "qualification": "原句「ASCII 以外 / 非 ASCII」漏掉 DEL；Python 文档为 non-ASCII and non-printable，工具同样从 U+007F 起转义，已改。",
+   "implementation": [
+    "jf:quote"
+   ],
+   "primarySources": [
+    "https://docs.python.org/3/library/json.html"
+   ]
+  },
+  {
+   "id": "json-formatter:en:faqItems[id=comments].answer:4",
+   "slug": "json-formatter",
+   "language": "en",
+   "file": "src/content/tools/json-formatter/en.mdx",
+   "line": 20,
+   "field": "faqItems[id=comments].answer",
+   "statement": "Accept JSON5 / JSONC or use Convert to JSON; comments are removed and trailing commas, single quotes and unquoted keys rewritten; a note lists every kind of change; NaN and Infinity stay an error.",
+   "decision": "supported",
+   "qualification": "engine:444-450 只在 j5 解析成功时给 json5 变更；NaN/Infinity 报 nonFinite（engine:312）。",
+   "implementation": [
+    "jf:parseJson",
+    "jf:changeList"
+   ],
+   "primarySources": [
+    "https://spec.json5.org/",
+    "https://code.visualstudio.com/docs/languages/json"
+   ]
+  },
+  {
+   "id": "json-formatter:en:faqItems[id=changes].answer:5",
+   "slug": "json-formatter",
+   "language": "en",
+   "file": "src/content/tools/json-formatter/en.mdx",
+   "line": 23,
+   "field": "faqItems[id=changes].answer",
+   "statement": "Values stay the same; whitespace changes; string escapes are rewritten as JSON.stringify does (\\u00e9 → é, \\/ → /); numbers and duplicate keys are kept as written unless chosen otherwise.",
+   "decision": "supported",
+   "qualification": "quote() 用 JSON.stringify；数值按 raw 输出；dupes 默认 keep。",
+   "implementation": [
+    "jf:quote",
+    "jf:orderOf"
+   ],
+   "primarySources": [
+    "https://www.rfc-editor.org/rfc/rfc8259#section-7"
+   ]
+  },
+  {
+   "id": "json-formatter:en:faqItems[id=max-size].answer:6",
+   "slug": "json-formatter",
+   "language": "en",
+   "file": "src/content/tools/json-formatter/en.mdx",
+   "line": 26,
+   "field": "faqItems[id=max-size].answer",
+   "statement": "Files up to 50 MB open; input up to 2 MB is formatted as you type, above that press Format; parsing runs in a Web Worker; editing, Format again or Clear stops the previous run; test 2026-10-03 (Apple M1 Max, Chromium 152): 10.7 MB took 2 to 4 seconds, putting the text into the input box took 1 to 2 seconds.",
+   "decision": "qualified",
+   "qualification": "FILE_LIMIT = 50*1024*1024 字节；AUTO_LIMIT = 2,000,000 个 UTF-16 码元，界面 size() 按字符数格式化（单位见未改）。",
+   "implementation": [
+    "jf:openFile",
+    "jf:run",
+    "jf:client"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "json-formatter:zh:faqItems[id=privacy].answer:1",
+   "slug": "json-formatter",
+   "language": "zh",
+   "file": "src/content/tools/json-formatter/zh.mdx",
+   "line": 11,
+   "field": "faqItems[id=privacy].answer",
+   "statement": "解析与格式化在本标签页的 Web Worker 中执行，不上传；设置与符合条件的输入写入本地存储；单工具 50 KB（JSON 序列化后），超限保留旧状态；200,000 字符起只存设置；清空或 Ctrl/⌘+L 删除已存输入；本页加载 GA 与 AdSense；format / minify 仅在成功后记录并按「输入 + 选项」去重；键入、恢复、无效、失败、取消、过期结果不记录；事件只含工具名与动作。",
+   "decision": "qualified",
+   "qualification": "50 KB = JSON 文本长度上限（ToolLayout MAX_ENTRY 51200）；200,000 为 UTF-16 length；GA/AdSense 依 ToolLayout 默认 input 策略。",
+   "implementation": [
+    "jf:save",
+    "jf:run",
+    "jf:track",
+    "tool:ztPersist"
+   ],
+   "primarySources": [
+    "src/data/persistence.ts",
+    "src/layouts/ToolLayout.astro#ztPersist"
+   ]
+  },
+  {
+   "id": "json-formatter:zh:faqItems[id=numbers].answer:2",
+   "slug": "json-formatter",
+   "language": "zh",
+   "file": "src/content/tools/json-formatter/zh.mdx",
+   "line": 14,
+   "field": "faqItems[id=numbers].answer",
+   "statement": "多数工具用 JSON.parse，数字存为 64 位双精度；超过 9007199254740991 的整数不一定存准，1845223349876512769 变成 1845223349876512800；JSON.stringify 把 1.0 写成 1、1e2 写成 100；本工具按原文保留并列出会变的数字。",
+   "decision": "supported",
+   "qualification": "实测 Node：1830000000000000001 → 1830000000000000000；1845223349876512769 → 1845223349876512800（zh）。",
+   "implementation": [
+    "jf:numberChange",
+    "jf:serialize"
+   ],
+   "primarySources": [
+    "https://www.rfc-editor.org/rfc/rfc8259#section-6"
+   ]
+  },
+  {
+   "id": "json-formatter:zh:faqItems[id=non-ascii].answer:3",
+   "slug": "json-formatter",
+   "language": "zh",
+   "file": "src/content/tools/json-formatter/zh.mdx",
+   "line": 17,
+   "field": "faqItems[id=non-ascii].answer",
+   "statement": "python3 -m json.tool 默认把可打印 ASCII 以外的字符写成 \\uXXXX，「张三」成为 \\u5f20\\u4e09；Python 3.9 起可加 --no-ensure-ascii；本工具默认原样输出，勾选「转义非 ASCII」得到纯 ASCII。",
+   "decision": "corrected",
+   "qualification": "原句「ASCII 以外 / 非 ASCII」漏掉 DEL；Python 文档为 non-ASCII and non-printable，工具同样从 U+007F 起转义，已改。",
+   "implementation": [
+    "jf:quote"
+   ],
+   "primarySources": [
+    "https://docs.python.org/3/library/json.html"
+   ]
+  },
+  {
+   "id": "json-formatter:zh:faqItems[id=comments].answer:4",
+   "slug": "json-formatter",
+   "language": "zh",
+   "file": "src/content/tools/json-formatter/zh.mdx",
+   "line": 20,
+   "field": "faqItems[id=comments].answer",
+   "statement": "勾选「接受 JSON5 / JSONC」或点「转为 JSON」；注释删除，尾逗号、单引号、未加引号的键改写；提示列出每类数量；NaN 与 Infinity 仍报错。",
+   "decision": "supported",
+   "qualification": "engine:444-450 只在 j5 解析成功时给 json5 变更；NaN/Infinity 报 nonFinite（engine:312）。",
+   "implementation": [
+    "jf:parseJson",
+    "jf:changeList"
+   ],
+   "primarySources": [
+    "https://spec.json5.org/",
+    "https://code.visualstudio.com/docs/languages/json"
+   ]
+  },
+  {
+   "id": "json-formatter:zh:faqItems[id=changes].answer:5",
+   "slug": "json-formatter",
+   "language": "zh",
+   "file": "src/content/tools/json-formatter/zh.mdx",
+   "line": 23,
+   "field": "faqItems[id=changes].answer",
+   "statement": "值不变；空白与字符串转义改写（\\u5f20 → 张，\\/ → /）；数字与重复键默认按原文保留。",
+   "decision": "supported",
+   "qualification": "quote() 用 JSON.stringify；数值按 raw 输出；dupes 默认 keep。",
+   "implementation": [
+    "jf:quote",
+    "jf:orderOf"
+   ],
+   "primarySources": [
+    "https://www.rfc-editor.org/rfc/rfc8259#section-7"
+   ]
+  },
+  {
+   "id": "json-formatter:zh:faqItems[id=max-size].answer:6",
+   "slug": "json-formatter",
+   "language": "zh",
+   "file": "src/content/tools/json-formatter/zh.mdx",
+   "line": 26,
+   "field": "faqItems[id=max-size].answer",
+   "statement": "可打开 50 MB 以内文件；2 MB 以内随输入格式化，超过后点「格式化」；Web Worker 执行；修改输入、再点「格式化」或「清空」中止上一次；测试 2026-10-03：10.7 MB 用 2～4 秒，放入输入框用 1～2 秒。",
+   "decision": "qualified",
+   "qualification": "FILE_LIMIT = 50*1024*1024 字节；AUTO_LIMIT = 2,000,000 个 UTF-16 码元，界面 size() 按字符数格式化（单位见未改）。",
+   "implementation": [
+    "jf:openFile",
+    "jf:run",
+    "jf:client"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "json-formatter:ja:faqItems[id=privacy].answer:1",
+   "slug": "json-formatter",
+   "language": "ja",
+   "file": "src/content/tools/json-formatter/ja.mdx",
+   "line": 11,
+   "field": "faqItems[id=privacy].answer",
+   "statement": "解析と整形はこのタブの Web Worker で行い、JSON をアップロードしない；設定と条件に合う入力をローカルストレージに保存；ツールごとに JSON 化後 50 KB、超えると前の状態が残る；200,000 文字以上は設定だけ保存；クリアか Ctrl/⌘+L で保存入力を削除；GA と AdSense を読み込む；format / minify は成功後だけ記録し重複しない；入力途中・復元・不正・失敗・中止・古い結果は記録しない；イベントはツール名と操作名のみ。",
+   "decision": "qualified",
+   "qualification": "50 KB = JSON 文本长度上限（ToolLayout MAX_ENTRY 51200）；200,000 为 UTF-16 length；GA/AdSense 依 ToolLayout 默认 input 策略。",
+   "implementation": [
+    "jf:save",
+    "jf:run",
+    "jf:track",
+    "tool:ztPersist"
+   ],
+   "primarySources": [
+    "src/data/persistence.ts",
+    "src/layouts/ToolLayout.astro#ztPersist"
+   ]
+  },
+  {
+   "id": "json-formatter:ja:faqItems[id=numbers].answer:2",
+   "slug": "json-formatter",
+   "language": "ja",
+   "file": "src/content/tools/json-formatter/ja.mdx",
+   "line": 14,
+   "field": "faqItems[id=numbers].answer",
+   "statement": "JSON.parse は数値を 64 ビット倍精度で持つ；2^53 − 1 を超える整数は値が変わることがあり、1830000000000000001 は 1830000000000000000 になる；JSON.stringify で 1.0 は 1、1e2 は 100；本ツールは書かれたとおりに出力し、変わる数値を注記する。",
+   "decision": "supported",
+   "qualification": "实测 Node：1830000000000000001 → 1830000000000000000；1845223349876512769 → 1845223349876512800（zh）。",
+   "implementation": [
+    "jf:numberChange",
+    "jf:serialize"
+   ],
+   "primarySources": [
+    "https://www.rfc-editor.org/rfc/rfc8259#section-6"
+   ]
+  },
+  {
+   "id": "json-formatter:ja:faqItems[id=non-ascii].answer:3",
+   "slug": "json-formatter",
+   "language": "ja",
+   "file": "src/content/tools/json-formatter/ja.mdx",
+   "line": 17,
+   "field": "faqItems[id=non-ascii].answer",
+   "statement": "python3 -m json.tool は既定で表示可能な ASCII 以外を \\uXXXX に変換；Python 3.9 以降は --no-ensure-ascii；本ツールは既定でそのまま出力し、オンにすると ASCII だけになる。",
+   "decision": "corrected",
+   "qualification": "原句「ASCII 以外 / 非 ASCII」漏掉 DEL；Python 文档为 non-ASCII and non-printable，工具同样从 U+007F 起转义，已改。",
+   "implementation": [
+    "jf:quote"
+   ],
+   "primarySources": [
+    "https://docs.python.org/3/library/json.html"
+   ]
+  },
+  {
+   "id": "json-formatter:ja:faqItems[id=comments].answer:4",
+   "slug": "json-formatter",
+   "language": "ja",
+   "file": "src/content/tools/json-formatter/ja.mdx",
+   "line": 20,
+   "field": "faqItems[id=comments].answer",
+   "statement": "「JSON5 / JSONC を受け付ける」か「JSON に変換」；コメント削除、末尾カンマ・シングルクォート・クォートなしキーを書き換え；変更の種類と数を注記；NaN と Infinity はエラー。",
+   "decision": "supported",
+   "qualification": "engine:444-450 只在 j5 解析成功时给 json5 变更；NaN/Infinity 报 nonFinite（engine:312）。",
+   "implementation": [
+    "jf:parseJson",
+    "jf:changeList"
+   ],
+   "primarySources": [
+    "https://spec.json5.org/",
+    "https://code.visualstudio.com/docs/languages/json"
+   ]
+  },
+  {
+   "id": "json-formatter:ja:faqItems[id=changes].answer:5",
+   "slug": "json-formatter",
+   "language": "ja",
+   "file": "src/content/tools/json-formatter/ja.mdx",
+   "line": 23,
+   "field": "faqItems[id=changes].answer",
+   "statement": "値は変わらない；空白と文字列エスケープの書き方が変わる（\\u6771 → 東、\\/ → /）；数値と重複キーは既定でそのまま。",
+   "decision": "supported",
+   "qualification": "quote() 用 JSON.stringify；数值按 raw 输出；dupes 默认 keep。",
+   "implementation": [
+    "jf:quote",
+    "jf:orderOf"
+   ],
+   "primarySources": [
+    "https://www.rfc-editor.org/rfc/rfc8259#section-7"
+   ]
+  },
+  {
+   "id": "json-formatter:ja:faqItems[id=max-size].answer:6",
+   "slug": "json-formatter",
+   "language": "ja",
+   "file": "src/content/tools/json-formatter/ja.mdx",
+   "line": 26,
+   "field": "faqItems[id=max-size].answer",
+   "statement": "50 MB までのファイルを開ける；2 MB までは入力に合わせて整形、超えると「整形」；Web Worker；入力変更・再整形・クリアで前の処理が止まる；テスト 2026-10-03：10.7 MB に 2～4 秒、入力欄に入れるのに 1～2 秒。",
+   "decision": "qualified",
+   "qualification": "FILE_LIMIT = 50*1024*1024 字节；AUTO_LIMIT = 2,000,000 个 UTF-16 码元，界面 size() 按字符数格式化（单位见未改）。",
+   "implementation": [
+    "jf:openFile",
+    "jf:run",
+    "jf:client"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "json-formatter:ko:faqItems[id=privacy].answer:1",
+   "slug": "json-formatter",
+   "language": "ko",
+   "file": "src/content/tools/json-formatter/ko.mdx",
+   "line": 11,
+   "field": "faqItems[id=privacy].answer",
+   "statement": "파싱과 포맷은 이 탭의 Web Worker에서 실행하며 JSON을 업로드하지 않는다；설정과 조건에 맞는 입력을 로컬 저장소에 저장；도구마다 JSON 직렬화 후 50KB, 초과하면 이전 상태 유지；200,000자 이상이면 설정만 저장；지우기나 Ctrl/⌘+L로 저장 입력 삭제；GA와 AdSense를 불러온다；format / minify는 성공 후에만 기록하고 중복 기록하지 않는다；입력 중·복원·오류·실패·취소·이전 결과는 기록하지 않는다；이벤트에는 도구 이름과 동작만 들어간다.",
+   "decision": "qualified",
+   "qualification": "50 KB = JSON 文本长度上限（ToolLayout MAX_ENTRY 51200）；200,000 为 UTF-16 length；GA/AdSense 依 ToolLayout 默认 input 策略。",
+   "implementation": [
+    "jf:save",
+    "jf:run",
+    "jf:track",
+    "tool:ztPersist"
+   ],
+   "primarySources": [
+    "src/data/persistence.ts",
+    "src/layouts/ToolLayout.astro#ztPersist"
+   ]
+  },
+  {
+   "id": "json-formatter:ko:faqItems[id=numbers].answer:2",
+   "slug": "json-formatter",
+   "language": "ko",
+   "file": "src/content/tools/json-formatter/ko.mdx",
+   "line": 14,
+   "field": "faqItems[id=numbers].answer",
+   "statement": "대부분의 도구는 JSON.parse를 쓰고 숫자를 64비트 부동소수점으로 저장；2^53 − 1을 넘는 정수는 값이 바뀔 수 있다；JSON.stringify는 20.0을 20, 1e2를 100으로 쓴다；이 도구는 쓰인 그대로 출력하고 바뀌는 숫자를 안내한다.",
+   "decision": "supported",
+   "qualification": "实测 Node：1830000000000000001 → 1830000000000000000；1845223349876512769 → 1845223349876512800（zh）。",
+   "implementation": [
+    "jf:numberChange",
+    "jf:serialize"
+   ],
+   "primarySources": [
+    "https://www.rfc-editor.org/rfc/rfc8259#section-6"
+   ]
+  },
+  {
+   "id": "json-formatter:ko:faqItems[id=non-ascii].answer:3",
+   "slug": "json-formatter",
+   "language": "ko",
+   "file": "src/content/tools/json-formatter/ko.mdx",
+   "line": 17,
+   "field": "faqItems[id=non-ascii].answer",
+   "statement": "python3 -m json.tool은 기본적으로 출력 가능한 ASCII 밖의 문자를 \\uXXXX로 쓴다；Python 3.9부터 --no-ensure-ascii；이 도구는 기본적으로 그대로 출력하고 옵션을 켜면 ASCII만 남는다.",
+   "decision": "corrected",
+   "qualification": "原句「ASCII 以外 / 非 ASCII」漏掉 DEL；Python 文档为 non-ASCII and non-printable，工具同样从 U+007F 起转义，已改。",
+   "implementation": [
+    "jf:quote"
+   ],
+   "primarySources": [
+    "https://docs.python.org/3/library/json.html"
+   ]
+  },
+  {
+   "id": "json-formatter:ko:faqItems[id=comments].answer:4",
+   "slug": "json-formatter",
+   "language": "ko",
+   "file": "src/content/tools/json-formatter/ko.mdx",
+   "line": 20,
+   "field": "faqItems[id=comments].answer",
+   "statement": "「JSON5 / JSONC 허용」이나 「JSON으로 변환」；주석 제거, 끝 쉼표·작은따옴표·따옴표 없는 키를 고친다；바뀐 종류와 개수를 알려 준다；NaN과 Infinity는 오류.",
+   "decision": "supported",
+   "qualification": "engine:444-450 只在 j5 解析成功时给 json5 变更；NaN/Infinity 报 nonFinite（engine:312）。",
+   "implementation": [
+    "jf:parseJson",
+    "jf:changeList"
+   ],
+   "primarySources": [
+    "https://spec.json5.org/",
+    "https://code.visualstudio.com/docs/languages/json"
+   ]
+  },
+  {
+   "id": "json-formatter:ko:faqItems[id=changes].answer:5",
+   "slug": "json-formatter",
+   "language": "ko",
+   "file": "src/content/tools/json-formatter/ko.mdx",
+   "line": 23,
+   "field": "faqItems[id=changes].answer",
+   "statement": "값은 바뀌지 않는다；공백과 문자열 이스케이프 표기가 바뀐다(\\uc911 → 중, \\/ → /)；숫자와 중복 키는 기본적으로 그대로 둔다.",
+   "decision": "supported",
+   "qualification": "quote() 用 JSON.stringify；数值按 raw 输出；dupes 默认 keep。",
+   "implementation": [
+    "jf:quote",
+    "jf:orderOf"
+   ],
+   "primarySources": [
+    "https://www.rfc-editor.org/rfc/rfc8259#section-7"
+   ]
+  },
+  {
+   "id": "json-formatter:ko:faqItems[id=max-size].answer:6",
+   "slug": "json-formatter",
+   "language": "ko",
+   "file": "src/content/tools/json-formatter/ko.mdx",
+   "line": 26,
+   "field": "faqItems[id=max-size].answer",
+   "statement": "50 MB까지 열 수 있다；2 MB까지는 입력하는 대로, 그보다 크면 「정렬」；Web Worker；입력 변경·재실행·지우기로 이전 처리 중단；테스트 2026-10-03: 10.7 MB에 2~4초, 입력란에 넣는 데 1~2초.",
+   "decision": "qualified",
+   "qualification": "FILE_LIMIT = 50*1024*1024 字节；AUTO_LIMIT = 2,000,000 个 UTF-16 码元，界面 size() 按字符数格式化（单位见未改）。",
+   "implementation": [
+    "jf:openFile",
+    "jf:run",
+    "jf:client"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "json-formatter:en:H2 What Formatting Keeps (parser claim):1",
+   "slug": "json-formatter",
+   "language": "en",
+   "file": "src/content/tools/json-formatter/en.mdx",
+   "line": 33,
+   "field": "H2 What Formatting Keeps (parser claim)",
+   "statement": "Own parser follows RFC 8259, tested against all 318 JSONTestSuite files, accepts the same documents as JSON.parse.",
+   "decision": "corrected",
+   "qualification": "原句与下一句的 BOM 行为矛盾：工具去 BOM 后解析，测试比较前也 strip BOM。已补限定。",
+   "implementation": [
+    "jf:parseJson",
+    "jf:analyze"
+   ],
+   "primarySources": [
+    "https://www.rfc-editor.org/rfc/rfc8259#section-8.1"
+   ]
+  },
+  {
+   "id": "json-formatter:en:H2 What Formatting Keeps (bullets):1",
+   "slug": "json-formatter",
+   "language": "en",
+   "file": "src/content/tools/json-formatter/en.mdx",
+   "line": 35,
+   "field": "H2 What Formatting Keeps (bullets)",
+   "statement": "Numbers copied as written; duplicate keys kept and located; leading BOM removed and reported; string escapes rewritten as JSON.stringify (\\u00e9 → é, \\/ → /); Escape non-ASCII writes above U+007E.",
+   "decision": "supported",
+   "qualification": "320 行实现与 318 文件测试一致；BOM 依据 RFC 8259 §8.1。",
+   "implementation": [
+    "jf:serialize",
+    "jf:quote",
+    "jf:analyze"
+   ],
+   "primarySources": [
+    "https://www.rfc-editor.org/rfc/rfc8259#section-4"
+   ]
+  },
+  {
+   "id": "json-formatter:en:H2 Order ID example:1",
+   "slug": "json-formatter",
+   "language": "en",
+   "file": "src/content/tools/json-formatter/en.mdx",
+   "line": 41,
+   "field": "H2 Order ID example",
+   "statement": "1830000000000000001 stays exact, note lists /order_id → 1830000000000000000; RFC 8259 §6 gives the ±(2^53−1) range; \"As JavaScript reads them\" gives [1,100,0.1,0,1e400].",
+   "decision": "supported",
+   "qualification": "示例块由测试按 jf: 标注复算；1e400 在 js 模式保留原字面量。",
+   "implementation": [
+    "jf:numberChange",
+    "jf:numberOut"
+   ],
+   "primarySources": [
+    "https://www.rfc-editor.org/rfc/rfc8259#section-6"
+   ]
+  },
+  {
+   "id": "json-formatter:en:H2 Duplicate Keys:1",
+   "slug": "json-formatter",
+   "language": "en",
+   "file": "src/content/tools/json-formatter/en.mdx",
+   "line": 95,
+   "field": "H2 Duplicate Keys",
+   "statement": "Keep all keeps both entries and points at the second; Keep the last matches JSON.parse, jq and Python (last value at first position).",
+   "decision": "supported",
+   "qualification": "orderOf() 与 JSON.parse/jq/Python 行为一致（测试 2000+ 例）。",
+   "implementation": [
+    "jf:orderOf",
+    "jf:closeFrame"
+   ],
+   "primarySources": [
+    "https://www.rfc-editor.org/rfc/rfc8259#section-4"
+   ]
+  },
+  {
+   "id": "json-formatter:en:H2 Error Messages + table + hints:1",
+   "slug": "json-formatter",
+   "language": "en",
+   "file": "src/content/tools/json-formatter/en.mdx",
+   "line": 119,
+   "field": "H2 Error Messages + table + hints",
+   "statement": "Line/column/cause, previous line and caret, six-message table, one-click fence/escaped/inner JSON fixes, JSON Lines link.",
+   "decision": "supported",
+   "qualification": "codeFrame 与 jsonSyntaxError 由测试复算（注解块 + errAt 断言），JSONL 链接按语言前缀。",
+   "implementation": [
+    "jf:jsonSyntaxError",
+    "jf:codeFrame",
+    "jf:hintFor"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "json-formatter:en:H2 Comments JSONC/JSON5:1",
+   "slug": "json-formatter",
+   "language": "en",
+   "file": "src/content/tools/json-formatter/en.mdx",
+   "line": 150,
+   "field": "H2 Comments JSONC/JSON5",
+   "statement": "VS Code settings/tasks/launch use JSONC; comments and trailing commas, warning shown; JSON5 superset; hex→decimal exact; 103 inputs match json5 2.2.3 except NaN/Infinity.",
+   "decision": "supported",
+   "qualification": "VS Code 文档 2026-10-28 抓取确认「accepts trailing commas … display a warning」；fixture 103 例。",
+   "implementation": [
+    "jf:parseJson",
+    "jf:changes"
+   ],
+   "primarySources": [
+    "https://code.visualstudio.com/docs/languages/json",
+    "https://spec.json5.org/"
+   ]
+  },
+  {
+   "id": "json-formatter:en:H2 Sorting Keys:1",
+   "slug": "json-formatter",
+   "language": "en",
+   "file": "src/content/tools/json-formatter/en.mdx",
+   "line": 178,
+   "field": "H2 Sorting Keys",
+   "statement": "Sort keys by code point = jq -S and json.tool --sort-keys; with Sort keys + 4 spaces + ASCII the output matches python.tool apart from final newline; jq rewrites exponents, Python writes 100.0/Infinity.",
+   "decision": "corrected",
+   "qualification": "原句称 byte-for-byte，缺 --sort-keys 与末尾换行限定；已改。",
+   "implementation": [
+    "jf:cmpCodePoint",
+    "jf:serialize"
+   ],
+   "primarySources": [
+    "https://docs.python.org/3/library/json.html"
+   ]
+  },
+  {
+   "id": "json-formatter:en:H2 How It Compares:1",
+   "slug": "json-formatter",
+   "language": "en",
+   "file": "src/content/tools/json-formatter/en.mdx",
+   "line": 199,
+   "field": "H2 How It Compares",
+   "statement": "jsonformatter.org / JSONLint rows and \"none sent the JSON to a server\", dated 2026-10-02.",
+   "decision": "unverified",
+   "qualification": "竞品观察本轮未重跑；E008 未能用一手来源确认。",
+   "implementation": [],
+   "primarySources": []
+  },
+  {
+   "id": "json-formatter:zh:H2 19 位订单号:1",
+   "slug": "json-formatter",
+   "language": "zh",
+   "file": "src/content/tools/json-formatter/zh.mdx",
+   "line": 31,
+   "field": "H2 19 位订单号",
+   "statement": "Java long + JSON.parse 双精度；RFC 8259 §6 范围；1845223349876512769 → 1845223349876512800；提示 /orderNo 第 1 行。",
+   "decision": "supported",
+   "qualification": "Node 实测 String() 得 ...800；示例块由测试复算。",
+   "implementation": [
+    "jf:numberChange"
+   ],
+   "primarySources": [
+    "https://www.rfc-editor.org/rfc/rfc8259#section-6"
+   ]
+  },
+  {
+   "id": "json-formatter:zh:H2 小程序 app.json 注释:1",
+   "slug": "json-formatter",
+   "language": "zh",
+   "file": "src/content/tools/json-formatter/zh.mdx",
+   "line": 56,
+   "field": "H2 小程序 app.json 注释",
+   "statement": "微信文档称 JSON 不支持注释；报错示例第 4 行第 5 列；JSON5 转换后去掉 1 注释 1 尾逗号；json5 2.2.3 对照 103 例。",
+   "decision": "supported",
+   "qualification": "微信文档链接为官方；行列与提示由测试复算；引文分隔符已按 join(\", \") 修正。",
+   "implementation": [
+    "jf:jsonSyntaxError",
+    "jf:changeList"
+   ],
+   "primarySources": [
+    "https://developers.weixin.qq.com/miniprogram/dev/framework/quickstart/code.html"
+   ]
+  },
+  {
+   "id": "json-formatter:zh:H2 中文输入法错误:1",
+   "slug": "json-formatter",
+   "language": "zh",
+   "file": "src/content/tools/json-formatter/zh.mdx",
+   "line": 114,
+   "field": "H2 中文输入法错误",
+   "statement": "全角冒号/逗号/引号不被 JSON 接受；示例第 1 行第 8 列；错误表 5 行；近 JSON 一键修复；JSON Lines 链接。",
+   "decision": "supported",
+   "qualification": "测试复算示例位置与 codeFrame；错误码与文案一致。",
+   "implementation": [
+    "jf:jsonSyntaxError",
+    "jf:hintFor"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "json-formatter:zh:H2 文件编码:1",
+   "slug": "json-formatter",
+   "language": "zh",
+   "file": "src/content/tools/json-formatter/zh.mdx",
+   "line": 142,
+   "field": "H2 文件编码",
+   "statement": "GBK「张三」= D5 C5 C8 FD 非 UTF-8；报错含坏字节偏移（从 0 数）；BOM UTF-16 解码并提示；开头 BOM 去掉，JSON.parse 报错，RFC 8259 §8.1 允许忽略。",
+   "decision": "corrected",
+   "qualification": "原引文漏「（从 0 数）」且缺 RFC 依据；已补。",
+   "implementation": [
+    "jf:decodeBytes",
+    "jf:analyze"
+   ],
+   "primarySources": [
+    "https://www.rfc-editor.org/rfc/rfc8259#section-8.1"
+   ]
+  },
+  {
+   "id": "json-formatter:zh:H2 与 jq、Python 对照:1",
+   "slug": "json-formatter",
+   "language": "zh",
+   "file": "src/content/tools/json-formatter/zh.mdx",
+   "line": 146,
+   "field": "H2 与 jq、Python 对照",
+   "statement": "Python 默认转义非 ASCII；本工具默认保留；4 空格 + ASCII 除末尾换行外与 Python 相同；排序同 jq -S 与 json.tool --sort-keys；400/120 份随机文档对照。",
+   "decision": "corrected",
+   "qualification": "原「逐字节相同」与 --sort-keys 缺命令名已改；400/120 与测试一致。",
+   "implementation": [
+    "jf:quote",
+    "jf:cmpCodePoint"
+   ],
+   "primarySources": [
+    "https://docs.python.org/3/library/json.html"
+   ]
+  },
+  {
+   "id": "json-formatter:zh:H2 与其他工具差别:1",
+   "slug": "json-formatter",
+   "language": "zh",
+   "file": "src/content/tools/json-formatter/zh.mdx",
+   "line": 166,
+   "field": "H2 与其他工具差别",
+   "statement": "Be JSON 与 toolhelper 的 2026-10-02 观察。",
+   "decision": "unverified",
+   "qualification": "竞品观察本轮未重跑。",
+   "implementation": [],
+   "primarySources": []
+  },
+  {
+   "id": "json-formatter:zh:H2 示例与数字:1",
+   "slug": "json-formatter",
+   "language": "zh",
+   "file": "src/content/tools/json-formatter/zh.mdx",
+   "line": 35,
+   "field": "H2 示例与数字",
+   "statement": "格式化输出逐字复算；数字模式输出与前端一致。",
+   "decision": "supported",
+   "qualification": "测试按 jf: 标注复算。",
+   "implementation": [
+    "jf:serialize"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "json-formatter:zh:FAQ max-size（50 MB / 2 MB）:1",
+   "slug": "json-formatter",
+   "language": "zh",
+   "file": "src/content/tools/json-formatter/zh.mdx",
+   "line": 26,
+   "field": "FAQ max-size（50 MB / 2 MB）",
+   "statement": "文件上限与随输入阈值。",
+   "decision": "qualified",
+   "qualification": "上限 52,428,800 字节（50 MiB），随输入阈值 2,000,000 码元；界面 size() 以字符计数显示 MB。",
+   "implementation": [
+    "jf:openFile",
+    "jf:run"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "json-formatter:ja:H2 気象庁 JSON 例:1",
+   "slug": "json-formatter",
+   "language": "ja",
+   "file": "src/content/tools/json-formatter/ja.mdx",
+   "line": 31,
+   "field": "H2 気象庁 JSON 例",
+   "statement": "130000.json 的抜粋を 2 空格で整形；文字列内の全角スペースと「０．５」は値の一部。",
+   "decision": "supported",
+   "qualification": "例は合成抜粋で、テストが整形結果を復算；URL は気象庁。",
+   "implementation": [
+    "jf:serialize"
+   ],
+   "primarySources": [
+    "https://www.jma.go.jp/bosai/forecast/"
+   ]
+  },
+  {
+   "id": "json-formatter:ja:H2 全角の記号・空白:1",
+   "slug": "json-formatter",
+   "language": "ja",
+   "file": "src/content/tools/json-formatter/ja.mdx",
+   "line": 63,
+   "field": "H2 全角の記号・空白",
+   "statement": "U+3000・全角コロン・かぎかっこは JSON の記号に使えない；例は 1 行 14 列；JSON5 は U+3000 を空白として許す；注記は「JSON で使えない空白文字 1 個」。",
+   "decision": "corrected",
+   "qualification": "「エラーになるのは文字列の外の全角文字だけ」が過剰一般化だったため修正；U+3000 は JSON5 の Zs 空白（仕様 2026-10-28 取得）。",
+   "implementation": [
+    "jf:jsonSyntaxError",
+    "jf:isJ5Space"
+   ],
+   "primarySources": [
+    "https://spec.json5.org/"
+   ]
+  },
+  {
+   "id": "json-formatter:ja:H2 主なエラーと表示:1",
+   "slug": "json-formatter",
+   "language": "ja",
+   "file": "src/content/tools/json-formatter/ja.mdx",
+   "line": 81,
+   "field": "H2 主なエラーと表示",
+   "statement": "エラー表 5 行、近 JSON のワンクリック修正、JSON Lines リンク。",
+   "decision": "supported",
+   "qualification": "テストがアノテーション例の code/line/col と codeFrame を照合。",
+   "implementation": [
+    "jf:jsonSyntaxError",
+    "jf:hintFor"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "json-formatter:ja:H2 Shift_JIS:1",
+   "slug": "json-formatter",
+   "language": "ja",
+   "file": "src/content/tools/json-formatter/ja.mdx",
+   "line": 93,
+   "field": "H2 Shift_JIS",
+   "statement": "「東京」= 93 8C 8B 9E；UTF-8 エラーは N バイト目（0 から数えて）；BOM 付き UTF-16 はデコードして通知；先頭 BOM は除去。",
+   "decision": "corrected",
+   "qualification": "引文に（0 から数えて）を追加。",
+   "implementation": [
+    "jf:decodeBytes",
+    "jf:analyze"
+   ],
+   "primarySources": [
+    "https://www.rfc-editor.org/rfc/rfc8259#section-8.1"
+   ]
+  },
+  {
+   "id": "json-formatter:ja:H2 python3 -m json.tool との違い:1",
+   "slug": "json-formatter",
+   "language": "ja",
+   "file": "src/content/tools/json-formatter/ja.mdx",
+   "line": 97,
+   "field": "H2 python3 -m json.tool との違い",
+   "statement": "既定で非 ASCII を \\uXXXX；--no-ensure-ascii；ASCII + 4 空格で Python と同じ（末尾改行を除く）；数値表（1.0/1e2/大整数/1e400）；400/120 对照。",
+   "decision": "corrected",
+   "qualification": "「1 バイトも違いません」を末尾改行差の注記に変更；表は jq 1.7.1 / Python 3.12 実測と一致。",
+   "implementation": [
+    "jf:quote",
+    "jf:numberOut"
+   ],
+   "primarySources": [
+    "https://docs.python.org/3/library/json.html"
+   ]
+  },
+  {
+   "id": "json-formatter:ja:H2 ほかの整形ツールとの比較:1",
+   "slug": "json-formatter",
+   "language": "ja",
+   "file": "src/content/tools/json-formatter/ja.mdx",
+   "line": 128,
+   "field": "H2 ほかの整形ツールとの比較",
+   "statement": "JSONきれい と jsonformatter.org の 2026-10-02 観察。",
+   "decision": "unverified",
+   "qualification": "競技観察は再実行していない。",
+   "implementation": [],
+   "primarySources": []
+  },
+  {
+   "id": "json-formatter:ja:H2 例の出力:1",
+   "slug": "json-formatter",
+   "language": "ja",
+   "file": "src/content/tools/json-formatter/ja.mdx",
+   "line": 35,
+   "field": "H2 例の出力",
+   "statement": "スペース 2 の整形結果。",
+   "decision": "supported",
+   "qualification": "jf: アノテーションで復算。",
+   "implementation": [
+    "jf:serialize"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "json-formatter:ja:FAQ max-size（50 MB / 2 MB）:1",
+   "slug": "json-formatter",
+   "language": "ja",
+   "file": "src/content/tools/json-formatter/ja.mdx",
+   "line": 26,
+   "field": "FAQ max-size（50 MB / 2 MB）",
+   "statement": "ファイル上限と自動整形のしきい値。",
+   "decision": "qualified",
+   "qualification": "52,428,800 バイト（50 MiB）、2,000,000 UTF-16 コード単位；UI は文字数で MB 表示。",
+   "implementation": [
+    "jf:openFile",
+    "jf:run"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "json-formatter:ko:H2 서울 대기환경 예시:1",
+   "slug": "json-formatter",
+   "language": "ko",
+   "file": "src/content/tools/json-formatter/ko.mdx",
+   "line": 31,
+   "field": "H2 서울 대기환경 예시",
+   "statement": "RealtimeCityAir 표본 인증키 응답; 2026-10-02 11시 중구 한 행; 20.0/53.0 유지, JS 모드는 20/53.",
+   "decision": "supported",
+   "qualification": "예시는 jf: 로 복산; 20.0→20은 numberChange가 null(표기만 다름)이라 안내 없음.  ",
+   "implementation": [
+    "jf:serialize",
+    "jf:numberChange"
+   ],
+   "primarySources": [
+    "https://data.seoul.go.kr/"
+   ]
+  },
+  {
+   "id": "json-formatter:ko:H2 중복 키:1",
+   "slug": "json-formatter",
+   "language": "ko",
+   "file": "src/content/tools/json-formatter/ko.mdx",
+   "line": 69,
+   "field": "H2 중복 키",
+   "statement": "RFC 8259 §4 SHOULD unique; 모두 유지가 기본, 안내에 두 번째 위치; 마지막만 유지는 JSON.parse/jq/Python과 같음.",
+   "decision": "supported",
+   "qualification": "closeFrame/orderOf 동작과 일치.",
+   "implementation": [
+    "jf:closeFrame",
+    "jf:orderOf"
+   ],
+   "primarySources": [
+    "https://www.rfc-editor.org/rfc/rfc8259#section-4"
+   ]
+  },
+  {
+   "id": "json-formatter:ko:H2 오류 메시지:1",
+   "slug": "json-formatter",
+   "language": "ko",
+   "file": "src/content/tools/json-formatter/ko.mdx",
+   "line": 86,
+   "field": "H2 오류 메시지",
+   "statement": "상태 줄 원인 + 앞 줄/오류 줄/위치 표시; Python dict 예시(1행 2열); 표 5행; 근접 JSON 수정 버튼; JSON Lines 링크.",
+   "decision": "supported",
+   "qualification": "테스트가 예시 위치와 codeFrame을復산.",
+   "implementation": [
+    "jf:jsonSyntaxError",
+    "jf:hintFor"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "json-formatter:ko:H2 EUC-KR 파일:1",
+   "slug": "json-formatter",
+   "language": "ko",
+   "file": "src/content/tools/json-formatter/ko.mdx",
+   "line": 112,
+   "field": "H2 EUC-KR 파일",
+   "statement": "「홍길동」= C8 AB B1 E6 B5 BF 6바이트; 오류는 N번째 바이트(0부터 셈); BOM UTF-16 디코딩·안내; 선두 BOM 제거.",
+   "decision": "corrected",
+   "qualification": "인용문에 (0부터 셈) 추가.",
+   "implementation": [
+    "jf:decodeBytes",
+    "jf:analyze"
+   ],
+   "primarySources": [
+    "https://www.rfc-editor.org/rfc/rfc8259#section-8.1"
+   ]
+  },
+  {
+   "id": "json-formatter:ko:H2 다른 도구와의 차이:1",
+   "slug": "json-formatter",
+   "language": "ko",
+   "file": "src/content/tools/json-formatter/ko.mdx",
+   "line": 116,
+   "field": "H2 다른 도구와의 차이",
+   "statement": "비볼디 관찰(2026-10-02); Python은 한글을 \\ud64d…로, 이 도구는 그대로; ASCII+4칸은 Python과 같고(끝 줄바꿈 제외); 키 정렬은 jq -S / json.tool --sort-keys.",
+   "decision": "corrected",
+   "qualification": "「같은 출력」에 끝 줄바꿈 예외 추가, --sort-keys에 명령명 추가.",
+   "implementation": [
+    "jf:quote",
+    "jf:cmpCodePoint"
+   ],
+   "primarySources": [
+    "https://docs.python.org/3/library/json.html"
+   ]
+  },
+  {
+   "id": "json-formatter:ko:H2 예시 출력:1",
+   "slug": "json-formatter",
+   "language": "ko",
+   "file": "src/content/tools/json-formatter/ko.mdx",
+   "line": 31,
+   "field": "H2 예시 출력",
+   "statement": "공백 2칸 결과와 JS 모드 결과.",
+   "decision": "supported",
+   "qualification": "jf: 복산.",
+   "implementation": [
+    "jf:serialize"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "json-formatter:ko:H2 예시·중복 키:1",
+   "slug": "json-formatter",
+   "language": "ko",
+   "file": "src/content/tools/json-formatter/ko.mdx",
+   "line": 31,
+   "field": "H2 예시·중복 키",
+   "statement": "중복 plan 두 항목 유지, 안내 위치.",
+   "decision": "supported",
+   "qualification": "closeFrame 경로와 일치.",
+   "implementation": [
+    "jf:closeFrame"
+   ],
+   "primarySources": []
+  },
+  {
+   "id": "json-formatter:ko:FAQ max-size（50 MB / 2 MB）:1",
+   "slug": "json-formatter",
+   "language": "ko",
+   "file": "src/content/tools/json-formatter/ko.mdx",
+   "line": 26,
+   "field": "FAQ max-size（50 MB / 2 MB）",
+   "statement": "파일 상한과 자동 정렬 임계값.",
+   "decision": "qualified",
+   "qualification": "52,428,800바이트(50 MiB), 2,000,000 UTF-16 코드 단위; UI는 문자 수를 MB로 표기.",
+   "implementation": [
+    "jf:openFile",
+    "jf:run"
+   ],
+   "primarySources": []
+  }
+ ]
+}

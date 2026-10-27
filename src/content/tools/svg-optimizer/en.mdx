@@ -20,7 +20,7 @@ faqItems:
     answer: "Check the notes under the previews. A missing viewBox stops the SVG from scaling, removed width and height let CSS or the container decide the size, and renamed IDs break CSS, JavaScript or <use> references outside the file. Untick the setting the note names and the file is optimized again."
   - question: "Why did the file get bigger?"
     id: "bigger"
-    answer: "Already optimized files have little left to remove, and convertTransform can write a rotate() into the path coordinates, which takes more characters. The Korean flag on Wikimedia Commons grows from 589 to 816 bytes this way. Keep the original in that case."
+    answer: "Already optimized files have little left to remove, and convertPathData can apply a rotate() to the path coordinates, which takes more characters. The Korean flag on Wikimedia Commons grows from 589 to 816 bytes this way. Keep the original in that case."
   - question: "Does SVGO make an SVG from an unknown source safe?"
     id: "untrusted-svg"
     answer: "No. With default settings SVGO keeps <script> and event attributes such as onclick. Remove scripts and event handlers strips them, but SVGO is an optimizer, not a sanitizer; serve untrusted SVG through <img>, where browsers do not run scripts."
@@ -66,7 +66,7 @@ faqItems:
 <h2>Example: a file that gets bigger</h2>
 {/* svgo-check: {"fixture":"korea","bytes":[589,816],"notes":["larger"],"render":"same"} */}
 <p>
-  The <a href="https://commons.wikimedia.org/wiki/File:Flag_of_South_Korea.svg" rel="noopener">Flag of South Korea</a> on Wikimedia Commons is 589 bytes and already hand-optimized. SVGO returns 816 bytes: <a href="https://svgo.dev/docs/plugins/convertTransform/" rel="noopener">convertTransform</a> writes the <code>rotate(33.69006752598)</code> of the trigrams into the path coordinates, and rotated coordinates need more digits. The tool flags the result as larger and tells you to keep the original. A batch run shows the same in the table, so you can leave such files out of the ZIP.
+  The <a href="https://commons.wikimedia.org/wiki/File:Flag_of_South_Korea.svg" rel="noopener">Flag of South Korea</a> on Wikimedia Commons is 589 bytes and already hand-optimized. SVGO returns 816 bytes: <a href="https://svgo.dev/docs/plugins/convertPathData/" rel="noopener">convertPathData</a> applies the <code>rotate(33.69006752598)</code> of the trigrams to the path coordinates, and rotated coordinates need more digits. The tool flags the result as larger and tells you to keep the original. A batch run shows the same in the table, and the ZIP includes every result, so keep the original file where the larger result would be a problem.
 </p>
 
 <h2>Settings that can break an SVG</h2>
@@ -74,7 +74,7 @@ faqItems:
   <thead><tr><th>Setting</th><th>What changes</th><th>Note shown</th></tr></thead>
   <tbody>
     <tr><td>Shorten and remove IDs (on)</td><td>Referenced IDs become <code>a</code>, <code>b</code>…; unreferenced ones are deleted</td><td>Lists the IDs that are gone</td></tr>
-    <tr><td>inlineStyles, minifyStyles (on)</td><td>One-off classes move into <code>style</code> attributes</td><td>Lists the classes that are gone</td></tr>
+    <tr><td>inlineStyles (on), minifyStyles (on)</td><td>inlineStyles moves one-off class rules into <code>style</code> attributes; minifyStyles can remove CSS rules the file does not use</td><td>Lists the classes that are gone</td></tr>
     <tr><td>Remove viewBox (off)</td><td>Removes a viewBox that equals width and height; the SVG no longer scales (<a href="https://svgo.dev/docs/plugins/removeViewBox/" rel="noopener">SVGO docs</a>)</td><td>Fixed size, with the pixels</td></tr>
     <tr><td>Remove width/height (off)</td><td>Size comes from CSS or the container; SVGO adds a viewBox if there was none</td><td>Size removed</td></tr>
     <tr><td>Remove &lt;title&gt; (off)</td><td>Screen readers lose the image name</td><td>Title removed</td></tr>
@@ -85,12 +85,12 @@ faqItems:
 
 <h2>Scripts and SVG from unknown sources</h2>
 <p>
-  With default settings SVGO keeps <code>&lt;script&gt;</code> and event attributes such as <code>onclick</code>; the tool counts them and says so. <strong>Remove scripts and event handlers</strong> runs <a href="https://svgo.dev/docs/plugins/removeScripts/" rel="noopener">removeScripts</a>, which in SVGO 4.1.0 also catches <code>java&amp;#9;script:</code> links and HTML inside <code>&lt;foreignObject&gt;</code>. Browsers disable scripts and external files for SVG used as an image (<a href="https://developer.mozilla.org/en-US/docs/Web/SVG/Guides/SVG_as_an_image" rel="noopener">MDN</a>), but not when the file is opened directly, inlined, or embedded with <code>&lt;object&gt;</code>, <code>&lt;embed&gt;</code> or <code>&lt;iframe&gt;</code>. The previews here are images, so nothing in a pasted SVG runs on this page.
+  With default settings SVGO keeps <code>&lt;script&gt;</code> and event attributes such as <code>onclick</code>; the tool counts them and says so. <strong>Remove scripts and event handlers</strong> runs <a href="https://svgo.dev/docs/plugins/removeScripts/" rel="noopener">removeScripts</a>, which in SVGO 4.1.0 also removes event handlers, <code>srcdoc</code> and executable links inside <code>&lt;foreignObject&gt;</code>, and recognises <code>java&amp;#9;script:</code> links. Browsers disable scripts and external files for SVG used as an image (<a href="https://developer.mozilla.org/en-US/docs/Web/SVG/Guides/SVG_as_an_image" rel="noopener">MDN</a>), but not when the file is opened directly, inlined, or embedded with <code>&lt;object&gt;</code>, <code>&lt;embed&gt;</code> or <code>&lt;iframe&gt;</code>. The previews here are images, so nothing in a pasted SVG runs on this page.
 </p>
 
 <h2>Many files and your build</h2>
 <p>
-  Drop a folder's worth of icons at once: each file gets a row with its size before and after, the saving and the rendering result, and <strong>Download all (.zip)</strong> packs the results under their original names. The config panel shows the matching file, for example:
+  Drop many icons at once: each file gets a row with its size before and after, the saving and the rendering result, and <strong>Download all (.zip)</strong> packs the results under their original names (a <code>.svgz</code> is saved as <code>.svg</code>). The config panel shows the matching file, for example:
 </p>
 
 ```js
@@ -113,7 +113,7 @@ export default {
 
 <h2>Limits</h2>
 <ul>
-  <li>50 MB per file. Files over 10 MB are optimized but not compared pixel by pixel.</li>
+  <li>50 MB per file. Files over 10 MB, or with a result over 10 MB, are optimized but not compared pixel by pixel.</li>
   <li>Invalid XML is reported with the line and column in the text you entered, counted in characters, and a reason in the page language. <code>&lt;svg&gt;&lt;rect&gt;&lt;/svg&gt;</code> without xmlns is reported at line 1, column 17: the closing tag &lt;/svg&gt; does not close the element opened last. The xmlns the tool adds is not counted.</li>
   <li>The comparison shows the first frame of animated SVG and cannot see external images, fonts or <code>&lt;use href="other.svg#id"&gt;</code>, because browsers do not load them into an SVG image.</li>
   <li>IDs and classes used by CSS or JavaScript outside the file are invisible to SVGO; the notes list what disappeared, not who used it.</li>

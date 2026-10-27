@@ -10,22 +10,22 @@ steps:
 faqItems:
   - question: "How many bits does one character use?"
     id: "bits-per-character"
-    answer: "It depends on the character. UTF-8 uses 1 to 4 bytes per code point, so A is 8 bits, é is 16, 中 is 24 and 😀 is 32. An emoji built from several code points, such as the family 👨‍👩‍👧, is 18 bytes (144 bits). The status line shows the character, code point and byte counts."
+    answer: "It depends on the character. UTF-8 uses 1 to 4 bytes per code point, so A is 8 bits, precomposed é is 16, 中 is 24 and 😀 is 32. An emoji built from several code points, such as the family 👨‍👩‍👧, is 18 bytes (144 bits). When you encode, the status line shows the character and byte counts, and adds the code point count when it differs from the character count, as with the family emoji."
   - question: "Can I paste binary without spaces?"
     id: "no-spaces"
-    answer: "Yes. A continuous string is split into 8-bit bytes, so its length must be a multiple of 8. Spaces, line breaks, commas, semicolons and 0b prefixes are also accepted between bytes."
+    answer: "Yes. A group longer than 8 bits is cut into 8-bit bytes, so each such group must be a multiple of 8 bits long. When no group is longer than 8 bits, a group of 1 to 7 bits is read as one byte with leading zeros, so `1001000` decodes to `H`. Spaces, line breaks, commas, semicolons and 0b prefixes are also accepted between bytes."
   - question: "Why do I get an error instead of text?"
     id: "decode-errors"
-    answer: "The tool shows text only when every bit is used and the bytes are valid UTF-8. Otherwise it names the problem: the character that is not 0 or 1, a bit count that is not a multiple of 8, or the byte where the UTF-8 is broken. It does not replace bad bytes with the � character."
+    answer: "The tool shows text only when every group can be read as a byte and the bytes are valid UTF-8. Otherwise it names the problem: the character that is not 0 or 1 and its position, a group longer than 8 bits whose length is not a multiple of 8, a short group mixed with a longer one, or the byte where the UTF-8 is broken. It does not replace bad bytes with the � character."
   - question: "Why is the apostrophe in don’t 24 bits?"
     id: "local-smart-quotes"
     answer: "It is probably the curly apostrophe ’ (U+2019), not the ASCII ' (U+0027). Word and PowerPoint replace straight quotes with curly ones as you type, unless you clear \"Straight quotes\" with “smart quotes” under AutoCorrect Options › AutoFormat As You Type. UTF-8 stores ’ in 3 bytes, 11100010 10000000 10011001; the ASCII apostrophe is one byte, 00100111."
   - question: "Does it support UTF-16, ASCII 7-bit or other encodings?"
     id: "encodings"
-    answer: "Output is always UTF-8, which is the same as ASCII for the characters U+0000 to U+007F. Input groups shorter than 8 bits, such as 7-bit ASCII, are read as whole bytes. UTF-16, Shift_JIS, GBK and EUC-KR are not supported; bytes in those encodings give an error or show control characters with a warning."
+    answer: "Output is always UTF-8, which is the same as ASCII for the characters U+0000 to U+007F. Input groups shorter than 8 bits, such as 7-bit ASCII, are read as whole bytes when no group is longer than 8 bits. UTF-16, Shift_JIS, GBK and EUC-KR are not decoded as those encodings: their bytes are read as UTF-8, so they usually fail the check or turn into unrelated ASCII. ASCII-only UTF-16 without a byte order mark passes with NUL control characters and a warning; other UTF-16 without a BOM can pass as unrelated ASCII with no warning (U+4E2D is 4E 2D in UTF-16BE, which reads as `N-`)."
   - question: "Is my text sent to a server?"
     id: "privacy"
-    answer: "No. Encoding and decoding run in this browser tab with TextEncoder and TextDecoder; the text and the bits are not uploaded and are not saved in browser storage. The page analytics record only the tool name and direction: text_to_binary after you commit an edit in the Text box or select a separator and encoding succeeds, and binary_to_text after a successful Binary → Text button or Ctrl/⌘+Enter action. Live typing does not record usage, and repeating an unchanged result for a direction is not counted again. Text and bits are not included."
+    answer: "No. Encoding and decoding run in this browser tab with TextEncoder and TextDecoder; the text and the bits are not uploaded and are not saved in browser storage. The usage event records only the tool name and direction: text_to_binary after you commit an edit in the Text box or select a separator and encoding succeeds, and binary_to_text after a successful Binary → Text button or Ctrl/⌘+Enter action. Live typing does not record usage, and repeating an unchanged result for a direction is not counted again. Text and bits are not included."
 ---
 
 ## Three Characters, Byte by Byte
@@ -69,7 +69,7 @@ Binary → Text either shows the whole text or shows no text and one message. Ea
 
 The UTF-8 checks follow the byte ranges in RFC 3629 section 4: `C0`, `C1` and `F5`–`FF` never occur, overlong forms are rejected, and so are surrogates (U+D800–U+DFFF) and values above U+10FFFF. The test suite compares the checker with the browser's `TextDecoder` in fatal mode on 20,000 random byte strings, and the two agree on every one.
 
-Two situations give text plus a note. If the result contains control characters, the status names the first one. `00000000 01000001` is `A` in UTF-16 big-endian, and here it decodes to U+0000 followed by `A`, which is almost never what you want. If the bytes start with `11101111 10111011 10111111` (a byte order mark), the tool keeps it as U+FEFF, while a plain `TextDecoder` removes it silently ([WHATWG Encoding, UTF-8 decode](https://encoding.spec.whatwg.org/#utf-8-decode)).
+Two cases need care even though text is shown. If the result contains C0 control characters other than tab and line breaks, or DEL, the status names the first one; C1 controls (U+0080–U+009F) are not counted. `00000000 01000001` is `A` in UTF-16 big-endian, and here it decodes to U+0000 followed by `A`, which is almost never what you want. If the bytes start with `11101111 10111011 10111111` (a byte order mark), the tool keeps it as U+FEFF without a warning, while a plain `TextDecoder` removes it silently ([WHATWG Encoding, UTF-8 decode](https://encoding.spec.whatwg.org/#utf-8-decode)).
 
 ## How It Compares with RapidTables
 
@@ -98,7 +98,7 @@ toBinary('Hi'); // "01001000 01101001"
 
 ## Limits
 
-- **UTF-8 only.** The tool does not output UTF-16, Shift_JIS, GBK or EUC-KR. Bytes in those encodings usually fail the UTF-8 check. UTF-16 input can pass it and shows control characters with a warning.
+- **UTF-8 only.** The tool does not output UTF-16, Shift_JIS, GBK or EUC-KR. Bytes in those encodings are read as UTF-8, so they usually fail the check. ASCII-only UTF-16 without a byte order mark passes and shows NUL control characters with a warning; other UTF-16 without a BOM can pass as unrelated ASCII with no warning (U+4E2D is 4E 2D in UTF-16BE, which reads as `N-`).
 - **Binary digits only.** Hex (`0x48`), octal and decimal are rejected. Separators are spaces, tabs, line breaks, commas and semicolons; a period or a dash is an error.
 - **Binary → Text runs on click.** Text → Binary updates while you type. The other direction waits for the button or Ctrl+Enter, so half-typed bytes do not produce stray characters.
 - **Unpaired surrogates.** A lone UTF-16 surrogate in the text cannot be encoded. It becomes U+FFFD (`11101111 10111111 10111101`), and the status says how many were replaced.

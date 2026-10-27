@@ -10,7 +10,7 @@ steps:
 faqItems:
   - question: "Which parser does this tool use?"
     id: "parser"
-    answer: "Your browser's own URL parser, the same one behind new URL() in JavaScript. It follows the WHATWG URL Standard, so the parts you see are the parts the browser uses when it opens the link or sends a fetch request, after the same normalization. For example, :443 is dropped from an https URL because it is the default port (80 for http and ws, 443 for wss, 21 for ftp); the request still goes to port 443, a note says so, and the port field shows the default as a placeholder. A second reading splits the text with the RFC 3986 Appendix B regular expression, and the tool warns when that reading finds a different host."
+    answer: "Your browser's own URL parser, the same one behind new URL() in JavaScript. It follows the WHATWG URL Standard, so the parts you see are the parts the browser uses after the same normalization when it opens the link. The fragment is not sent to the server, and fetch() rejects a URL that carries credentials. For example, :443 is dropped from an https URL because it is the default port (80 for http and ws, 443 for wss, 21 for ftp); the request still goes to port 443, a note says so, and the port field shows the default as a placeholder. A second reading splits the text with the RFC 3986 Appendix B regular expression, and the tool warns when that reading finds a different host."
   - question: "Why does example.com/path show an error?"
     id: "no-scheme"
     answer: "A URL needs a scheme such as https://. Without one, new URL() throws, so the tool says why and offers a button that parses the text as https://example.com/path. Relative links such as /api/users or ../img/logo.png need a base URL instead; type one under Base URL. Watch for localhost:3000/api: it does parse, but as the scheme localhost: with no host, and the tool points that out."
@@ -19,7 +19,7 @@ faqItems:
     answer: "The query is decoded with the application/x-www-form-urlencoded rules, in which + means a space; URLSearchParams and most server frameworks read it the same way. Write a literal plus sign as %2B: c%2B%2B decodes to c++. The tool marks parameters that contain + with “+ is a space”."
   - question: "What does “not UTF-8” on a parameter mean?"
     id: "not-utf8"
-    answer: "The percent-escapes in that parameter were not made from UTF-8, typically by an older site that encodes text in a legacy character set such as Windows-1252. Browsers and URLSearchParams read percent-escapes only as UTF-8, so bytes they cannot read become � (U+FFFD): q=caf%E9, which is café in Windows-1252, shows as caf�. The tool shows the same and keeps the original bytes under Raw."
+    answer: "The percent-escapes in that parameter were not made from UTF-8, typically by an older site that encodes text in a legacy character set such as Windows-1252. URLSearchParams, and this tool's display, percent-decode as UTF-8, so bytes they cannot read become � (U+FFFD): q=caf%E9, which is café in Windows-1252, shows as caf�. The browser still sends the original bytes, so a server that knows the legacy charset can read them; the tool keeps them under Raw."
   - question: "Does editing a parameter re-encode the rest of my URL?"
     id: "edit-params"
     answer: "No. Parameters you do not touch keep their original text byte for byte, including a key without '=', an invalid escape such as %zz and bytes that are not UTF-8. Only the pair you edit or add is encoded, the way URLSearchParams encodes it (a space becomes +)."
@@ -31,13 +31,13 @@ faqItems:
 
 ## What the parser changes
 
-Browsers do not take a URL literally. The [WHATWG URL Standard](https://url.spec.whatwg.org/) strips spaces, deletes tabs and newlines, lowercases the host, converts international domains to Punycode, resolves `.` and `..`, removes default ports and percent-encodes some characters. The tool lists each change.
+Browsers do not take a URL literally. The [WHATWG URL Standard](https://url.spec.whatwg.org/) trims leading and trailing spaces, deletes tabs and newlines, and percent-encodes some characters. For special schemes (http, https, ws, wss, ftp and file) it also lowercases the host, converts international domains to Punycode, resolves `.` and `..`, and removes default ports; a non-special scheme keeps an opaque host. The tool lists each change.
 
 {/* up-check: {"input":"https://user:pass@example.com:443/a/./b/../c?q=a+b&q=2&flag&x=%zz#frag","fields":{"href":"https://user:pass@example.com/a/c?q=a+b&q=2&flag&x=%zz#frag","port":""},"notes":["userinfo","password","defaultPort","dotSegments","badPercent"],"params":[["q","a b"],["q","2"],["flag",""],["x","%zz"]]} */}
 
 Paste `https://user:pass@example.com:443/a/./b/../c?q=a+b&q=2&flag&x=%zz#frag` and the normalized URL becomes `https://user:pass@example.com/a/c?q=a+b&q=2&flag&x=%zz#frag`. The notes say that port 443 was dropped because it is the default, that `/a/./b/../c` resolved to `/a/c`, and that the `%` at position 63 is not followed by two hex digits. Browsers keep that `%` as it is; `decodeURIComponent()` throws on it. The URL also carries a password. [RFC 3986 §3.2.1](https://www.rfc-editor.org/rfc/rfc3986#section-3.2.1) deprecates the `user:password` form and says applications should not show what follows the colon in clear text, so the password field is masked until you press **Show**.
 
-The query table shows four parameters: `q` twice (`a b`, then `2`), `flag` with no `=`, and `x` whose value stays `%zz`. The `+` is decoded as a space because query strings follow the [application/x-www-form-urlencoded](https://url.spec.whatwg.org/#urlencoded-parsing) rules, the same rules as `URLSearchParams`.
+The query table shows four parameters: `q` twice (`a b`, then `2`), `flag` with no `=`, and `x` whose value stays `%zz`. The `+` is decoded as a space because the tool reads the query with the [application/x-www-form-urlencoded](https://url.spec.whatwg.org/#urlencoded-parsing) parser, the same one `URLSearchParams` uses.
 
 ## When the browser and your server disagree
 
@@ -59,7 +59,7 @@ Two more cases come up often. `localhost:3000/api` parses without an error, but 
 
 ## Editing without side effects
 
-A tool that rebuilds the query with `URLSearchParams.toString()` re-encodes every pair, so the URL changes even when you edit nothing: `flag` becomes `flag=`, `%zz` becomes `%25zz`, and an invalid UTF-8 escape such as `%E4%B8` becomes `%EF%BF%BD`. This tool keeps each untouched pair as it was and encodes only the pair you change. Field edits go through the browser's own setters (`url.port = …`), so you get the result the browser accepts, with a note when it rejects or trims a value.
+A tool that rebuilds the query with `URLSearchParams.toString()` re-encodes every pair, so the URL can change even when you edit nothing: `flag` becomes `flag=`, `%zz` becomes `%25zz`, and an invalid UTF-8 escape such as `%E4%B8` becomes `%EF%BF%BD`. This tool keeps each untouched pair as it was and encodes only the pair you change. Field edits go through the browser's own setters (`url.port = …`), so you get the result the browser accepts, with a note when it rejects or trims a value.
 
 ## How it compares
 
@@ -67,7 +67,7 @@ On 2026-10-01 we pasted the same eight URLs into the tools at the top of Bing's 
 
 ## Limits
 
-- The result is your browser's. Node.js 24 passes 888 of the 896 parsing cases in the [web-platform-tests URL suite](https://github.com/web-platform-tests/wpt/tree/master/url) (the 8 others are `xn--` edge cases), and browser results are published on [wpt.fyi](https://wpt.fyi/results/url); an older browser may differ on edge cases.
+- The result is your browser's. Node.js 24 passes 883 of the 891 parsing cases in the [web-platform-tests URL suite](https://github.com/web-platform-tests/wpt/tree/master/url) (the 8 failures are `xn--` / IDNA edge cases), and browser results are published on [wpt.fyi](https://wpt.fyi/results/url); an older browser may differ on edge cases.
 - Chromium (Chrome 152 in our test) accepts some hosts the URL Standard forbids: `http://exa mple.com/` is read as the host `exa%20mple.com`, while Node.js rejects the URL. The tool then says the URL is not valid under the standard, names the character, and still shows the browser's reading.
 - The RFC 3986 reading is a regular-expression split plus a character check, not a model of any one library; test your server-side library with the URL itself.
 - There is no Public Suffix List, so the tool does not split `shop.example.co.uk` into subdomain and registrable domain.

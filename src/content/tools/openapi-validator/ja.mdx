@@ -12,13 +12,13 @@ faqItems:
     answer: "Swagger 2.0 と OpenAPI 3.0・3.1・3.2 です。swagger または openapi フィールドを読み、そのバージョンの公式 JSON Schema で検証します。Swagger 2.0 は OpenAPI Initiative のリポジトリにあるスキーマ、3.0（2024-10-18）・3.1（2026-08-03）・3.2（2026-08-30）は spec.openapis.org が公開しているスキーマです。"
   - id: "privacy"
     question: "仕様書はアップロードされますか？"
-    answer: "されません。解析とすべての確認はブラウザ内の Web Worker で行い、仕様書をアップロードせず、ブラウザのストレージにも保存しません。$ref の URL は取得せず、「他のファイル」に追加したファイルもページの中だけで使います。テキストやファイルの編集確定、ファイル操作、「サンプル」「検証」による確認が完了すると、ツール名と、検証エラーの有無に応じた validate_success または validate_error だけを記録します。入力中も結果は更新しますが利用イベントは記録しません。復元や初期表示、同じ検証結果、Worker の失敗、古い応答ではイベントを増やしません。仕様書の内容は含みません。"
+    answer: "されません。解析とすべての確認はブラウザ内（Web Worker、Worker を起動できない場合はページ上）で行い、仕様書をアップロードせず、ブラウザのストレージにも保存しません。$ref の URL は取得せず、「他のファイル」に追加したファイルもページの中だけで使います。テキストやファイルの編集確定、ファイル操作、「サンプル」「検証」による確認が完了すると、ツール名と、検証エラーの有無に応じた validate_success または validate_error だけを記録します。入力中も結果は更新しますが利用イベントは記録しません。復元や初期表示、同じ検証結果、Worker の失敗、古い応答ではイベントを増やしません。仕様書の内容は含みません。"
   - id: "external-refs"
     question: "$ref で分割したファイルもまとめて確認できますか？"
     answer: "できます。複数のファイルやフォルダをまとめて開くか、「他のファイル」に $ref と同じパス（例：schemas/pet.yaml）で追加してください。参照をファイルをまたいで解決し、問題はその記述があるファイルと行に表示します。追加していないファイルや URL への参照は「情報」に出ます。"
   - id: "errors-warnings"
     question: "エラーと警告の違いは？"
-    answer: "エラーは仕様の MUST や公式スキーマに反するもので、他のツールが読み込みを拒む可能性があります。警告は SHOULD の規則とよくある誤り（サンプル値がスキーマと合わない、使われていないコンポーネント、未定義のサーバー変数など）です。情報には確認しなかった内容を出します。"
+    answer: "エラーは仕様の MUST や公式スキーマに反するもので、他のツールが読み込みを拒む可能性があります。警告は SHOULD の規則とよくある誤り（サンプル値がスキーマと合わない、使われていないコンポーネント、未定義のサーバー変数など）です。情報には確認しなかった内容と注意すべき値を出します。"
   - id: "date-version"
     question: "info.version: 2024-01-15 がここでは通るのに、ほかのツールでエラーになるのはなぜですか？"
     answer: "このツールは YAML を YAML 1.2 の Core Schema で読みます（Redocly CLI、Spectral、swagger-parser と同じです）。そのため引用符なしの日付も文字列のままです。YAML 1.1 のタイムスタンプ規則で読むパーサーは日付に変換し、スキーマが info.version を拒否します。\"2024-01-15\" のように引用符で囲めば、どのパーサーでも文字列として読まれます。"
@@ -81,7 +81,7 @@ components:
 <p>XML のサンプル値は文字列で書かれたシリアライズ済みの本文なので、比較しません（OpenAPI 3.x の Example Object の説明どおり）。元のファイル全体では、Spectral 6.17.0 がサンプル値の不一致を 21 件エラーにし、そのうち 16 件はこの XML 文字列への「type must be object」でした。Redocly CLI 2.57.0 も同じ 16 件を警告にしています。サンプル値の警告は仕様違反ではないため、文書自体は有効と判定されます。</p>
 
 <h2>実例：3.0 の書き方のまま 3.1 に上げたスキーマ</h2>
-<p>OpenAPI 3.1 のスキーマは JSON Schema 2020-12 そのものです。3.1 の公式スキーマはスキーマの中身をほとんど確かめないので、このツールは各スキーマを 2020-12 のメタスキーマでも検証します。プロパティに <code>required: true</code> を書く、<code>type: int</code> と書く、3.0 の <code>nullable</code> を残す、といった誤りが見つかります。</p>
+<p>OpenAPI 3.1 のスキーマは JSON Schema 2020-12 を土台にした方言です。3.1 の公式スキーマはスキーマの中身をほとんど確かめないので、このツールは各スキーマを 2020-12 のメタスキーマでも検証します。プロパティに <code>required: true</code> を書く、<code>type: int</code> と書く、3.0 の <code>nullable</code> を残す、といった誤りが見つかります。</p>
 
 {/* ov */}
 <pre><code>{`openapi: 3.1.0
@@ -146,12 +146,12 @@ components:
   <tbody>
     <tr><td>必須・未知のフィールド、型、パラメーターやレスポンスの形</td><td>エラー</td><td>バージョンごとの公式 JSON Schema</td></tr>
     <tr><td>3.1・3.2 のスキーマオブジェクト</td><td>エラー</td><td>JSON Schema 2020-12 のメタスキーマ</td></tr>
-    <tr><td><code>$ref</code> の参照先が存在する（別ファイルも含む）</td><td>エラー</td><td>Reference Object</td></tr>
+    <tr><td>ローカルの <code>$ref</code> の参照先が存在する（追加した別ファイルも含む）</td><td>エラー</td><td>Reference Object</td></tr>
     <tr><td>パステンプレートと <code>in: path</code> の対応、パラメーター名だけが違うパス、重複したパラメーター・operationId・タグ名</td><td>エラー</td><td><a href="https://spec.openapis.org/oas/v3.1.1.html#paths-object" target="_blank" rel="noopener">Paths Object</a>、<a href="https://spec.openapis.org/oas/v3.1.1.html#parameter-object" target="_blank" rel="noopener">Parameter Object</a> の MUST</td></tr>
     <tr><td>セキュリティ要件のスキームが宣言済み</td><td>エラー</td><td><a href="https://spec.openapis.org/oas/v3.1.1.html#security-requirement-object" target="_blank" rel="noopener">Security Requirement Object</a></td></tr>
     <tr><td>サーバー変数のデフォルト値が enum に含まれる</td><td>3.1 以降はエラー、3.0 は警告</td><td><a href="https://spec.openapis.org/oas/v3.1.1.html#server-variable-object" target="_blank" rel="noopener">Server Variable Object</a></td></tr>
-    <tr><td>真偽値の <code>exclusiveMinimum</code> / <code>exclusiveMaximum</code> と同じオブジェクトに <code>minimum</code> / <code>maximum</code> がない（スキーマオブジェクト。2.0 では body 以外の Parameter・Header・Items Object も）</td><td>2.0 はエラー、3.0 は警告</td><td>2.0 は <a href="https://www.ietf.org/archive/id/draft-fge-json-schema-validation-00.txt" target="_blank" rel="noopener">JSON Schema draft 4</a>（§5.1.2.1：両方を書く MUST）、3.0 の <a href="https://datatracker.ietf.org/doc/html/draft-wright-json-schema-validation-00#section-5.3" target="_blank" rel="noopener">Wright draft 00</a> はこの MUST を削除しており、単独では効果がないだけです。公式スキーマ、Redocly CLI 2.57.0、Spectral 6.17.0 はこの点を単独では確認しません</td></tr>
-    <tr><td>サンプル値とスキーマの一致、未使用のコンポーネント、未定義・未使用のサーバー変数、パスのクエリ文字列</td><td>警告</td><td>仕様の SHOULD と、Redocly・Spectral も報告するよくある誤り</td></tr>
+    <tr><td>真偽値の <code>exclusiveMinimum</code> / <code>exclusiveMaximum</code> と同じオブジェクトに <code>minimum</code> / <code>maximum</code> がない（スキーマオブジェクト。2.0 では body 以外の Parameter・Header・Items Object も）</td><td>2.0 はエラー、3.0 は警告</td><td>2.0 は <a href="https://www.ietf.org/archive/id/draft-fge-json-schema-validation-00.txt" target="_blank" rel="noopener">JSON Schema draft 4</a>（§5.1.2.1・§5.1.3.1：両方を書く MUST）、3.0 の <a href="https://datatracker.ietf.org/doc/html/draft-wright-json-schema-validation-00#section-5.3" target="_blank" rel="noopener">Wright draft 00</a> はこの MUST を削除しており、単独では効果がないだけです。公式スキーマ、Redocly CLI 2.57.0、Spectral 6.17.0 はこの点を単独では確認しません</td></tr>
+    <tr><td>サンプル値とスキーマの一致、未使用のコンポーネント、未定義・未使用のサーバー変数、パスのクエリ文字列、3.1 の <code>nullable</code></td><td>警告</td><td>仕様の SHOULD と、Redocly・Spectral も報告するよくある誤り</td></tr>
   </tbody>
 </table>
 <p>YAML は <a href="https://yaml.org/spec/1.2.2/#1023-core-schema" target="_blank" rel="noopener">YAML 1.2 の Core Schema</a> で読みます。引用符なしの <code>version: 2026-10-02</code> は文字列のままです。同じ階層に同じキーが 2 回あると、JSON でも行番号付きの構文エラーになります。マージキー（<code>{'<<: *anchor'}</code>）も使えます。</p>
@@ -167,9 +167,9 @@ components:
 <h2>制限</h2>
 <ul>
   <li>命名や説明文などのスタイル規則は扱いません。チームのルールは、このツールの後で Redocly CLI や Spectral を使ってください。</li>
-  <li><code>$ref</code> の URL は取得しないので、ファイルを追加してください。アンカー参照（<code>#name</code>）は確認しません。</li>
-  <li>非常に大きな仕様書では、サンプル値の確認を 4 秒で打ち切り、その旨を表示します。2 MB を超える入力は「検証」を押したときに確認し、合計 50 MB を超えるファイルは読み込みません。</li>
-  <li>開いたファイルが 512 K 文字を超えるときは、全文を検証しますが、編集欄には最大 300 行を読み取り専用で表示します。約 10 MB を編集欄に入れるとページが 0.5 秒ほど止まるためです。行番号を押すと表示がその行に移ります。「全文をコピー」「ダウンロード」「全文を編集（遅くなります）」で全体を扱えます。自分で大量のテキストを編集欄に貼り付けた場合は、引き続きページが止まります。</li>
+  <li><code>$ref</code> の URL は取得せず、情報として表示するだけで確認しません。不足しているのがファイルへの参照なら、そのファイルを追加してください。アンカー参照（<code>#name</code>）は確認しません。</li>
+  <li>非常に大きな仕様書では、サンプル値の確認を 4 秒で打ち切り、その旨を表示します。2,097,152 文字を超える入力は「検証」を押したときに確認し、合計 50 MiB を超えるファイルは読み込みません。</li>
+  <li>開いたファイルが 512 K 文字を超えるときは、全文を検証しますが、編集欄には最大 300 行・49,152 文字を読み取り専用で表示します。約 10 MB を編集欄に入れるとページが 0.5 秒ほど止まるためです。行番号を押すと表示がその行に移ります。「全文をコピー」「ダウンロード」「全文を編集（遅くなります）」で全体を扱えます。自分で大量のテキストを編集欄に貼り付けた場合は、引き続きページが止まります。</li>
   <li>YAML は js-yaml 4.3.2 で読みます。ネストが 100 階層を超える文書、マージキーで処理するマッピングとキーが合計 10,000 個を超える文書、1 つのマージキーに 100 個を超えるマッピングを並べた文書は止まり、エラーに上限と行が出ます。</li>
 </ul>
 <p>関連ツール：型を生成する <a href="/ja/tools/openapi-to-typescript/">OpenAPI → TypeScript ジェネレーター</a>、リクエストの JSON を確かめる <a href="/ja/tools/json-schema-validator/">JSON Schema バリデーター</a>、インデントの誤りを探す <a href="/ja/tools/yaml-validator/">YAML バリデーター</a>。</p>
