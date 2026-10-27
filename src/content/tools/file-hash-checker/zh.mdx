@@ -13,13 +13,13 @@ faqItems:
     answer: "不会。浏览器里的后台线程把文件按 1 MB 分块从磁盘读出来计算，页面不会发出带有文件内容的请求。工具不保存文件、哈希值和校验列表，本页每次加载时还会删除为它保存过的值。工具发出的请求只有从本站加载计算脚本（file-hash-worker.js 和 hash-wasm 库）；本页不加载 Google Analytics 和 AdSense。"
   - id: "max-size"
     question: "文件大小有上限吗？"
-    answer: "没有固定上限。文件按流读取，4 GB 的 ISO 也只多占约 100 MB 内存。耗时随大小增加：在 Apple M1 Max 上，1 GB 文件算 SHA-256 约 4 秒。计算完成前请不要关闭页面。"
+    answer: "没有固定上限。文件按流读取，内存占用不随文件增大而增加；1 GB 文件实测多占约 100 MB。耗时随大小增加：在 Apple M1 Max 上，1 GB 文件算 SHA-256 约 4 秒。计算完成前请不要关闭页面。"
   - id: "algorithm"
     question: "该核对哪种哈希？下载页只给了 MD5 还可靠吗？"
     answer: "核对发布方给出的那一种。多数项目发布 SHA-256（Node.js、Ubuntu），Firefox 还发布 SHA-512；能选时用 SHA-256。只给了 MD5 时，用来发现下载损坏或不完整没有问题，但 MD5 和 SHA-1 都能被人为构造碰撞，防不了有意篡改；CRC32 只能发现意外损坏。"
   - id: "hash-length"
     question: "粘贴后提示「63 位十六进制不是任何支持的哈希长度」是什么意思？"
-    answer: "每种算法的长度是固定的：CRC32 8 位、MD5 32 位、SHA-1 40 位、SHA-256 64 位、SHA-384 96 位、SHA-512 128 位。长度对不上，说明复制时少了或多了字符，请回到下载页重新复制。"
+    answer: "每种算法的长度是固定的：CRC32 8 位、MD5 32 位、SHA-1 40 位、SHA-256 64 位、SHA-384 96 位、SHA-512 128 位。长度对不上，说明复制时少了或多了字符；但 56 位是 SHA-224，本工具不计算，会直接提示不支持。工具会给出所在行与长度，不靠猜。"
   - id: "safe"
     question: "哈希一致就说明文件安全吗？"
     answer: "只能说明文件和校验列表一字不差。如果攻击者能同时替换文件和列表，两者照样一致。Node.js、Ubuntu 都给校验列表做了 GPG 签名，需要更高把握时先用 GnuPG 验证列表。"
@@ -52,9 +52,9 @@ certutil -hashfile node-v24.21.0-win-x64.zip SHA256
 Get-FileHash node-v24.21.0-win-x64.zip
 ```
 
-`certutil` 的输出有一行说明、一行哈希、一行完成提示；[`Get-FileHash`](https://learn.microsoft.com/zh-cn/powershell/module/microsoft.powershell.utility/get-filehash) 默认算 SHA256，输出大写十六进制的表格。两种格式工具都能识别，大小写、全角数字和夹在中间的空格也不影响。反过来，勾选「大写」后复制的结果和 `Get-FileHash` 的写法一致。
+`certutil` 的输出有一行说明、一行哈希、一行完成提示；[`Get-FileHash`](https://learn.microsoft.com/zh-cn/powershell/module/microsoft.powershell.utility/get-filehash) 默认算 SHA256，输出大写十六进制的表格。两种格式工具都能识别，大小写和全角数字不影响；certutil 把哈希按两位一组用空格分开也能读。`Get-FileHash` 的表格不带文件名（`Path` 列不会被读取），只选表格中的一部分文件时，其余行会被当成不匹配的无名值，请只粘贴当前文件那一行，或把表格里的文件全部选上。反过来，勾选「大写」后复制的结果和 `Get-FileHash` 的写法一致。
 
-能识别的其他写法：`shasum --tag` 与 OpenSSL 的 `SHA256 (文件名) = 哈希`、npm `package-lock.json` 里的 `sha512-…`（Base64，[W3C SRI](https://www.w3.org/TR/SRI/) 格式）、Docker 的 `sha256:…`、SFV 校验文件里的 CRC32。粘贴的内容有误时会指出行号：多一个字符的 SHA-256 会提示「第 1 行：第 65 个字符「x」不是十六进制数字」，标着 SHA3 的值会提示不支持。
+能识别的其他写法：`shasum --tag` 与 OpenSSL 的 `SHA256 (文件名) = 哈希`、npm `package-lock.json` 里的 `sha512-…`（Base64，[W3C SRI](https://www.w3.org/TR/SRI/) 格式）、Docker 的 `sha256:…`、SFV 校验文件里的 CRC32。粘贴的内容有误时会指出行号：多一个字符的 SHA-256 会提示「第 1 行：第 65 个字符「x」不是十六进制数字」，标着 SHA3 或 BLAKE2 的值会提示不支持；56 位会按 SHA-224 提示不支持。没有标签、长度正好是 64 或 128 位的 SHA3 值与 SHA-256 / SHA-512 无法区分，工具按后者核对，不一致时另加说明。
 
 ## 大文件不再把整个文件读进内存
 
@@ -77,9 +77,9 @@ Get-FileHash node-v24.21.0-win-x64.zip
 
 ## 限制
 
-- 支持 SHA-256、SHA-1、SHA-384、SHA-512、MD5、CRC32。SHA-224、SHA3、BLAKE2（如 Arch Linux 的 `b2sums.txt`）、BLAKE3 不计算，粘贴这类值会提示不支持。
-- 一次最多 1,000 个文件；校验列表文件不超过 1 MB。
+- 支持 SHA-256、SHA-1、SHA-384、SHA-512、MD5、CRC32。SHA-224、SHA3、BLAKE2（如 Arch Linux 的 `b2sums.txt`）、BLAKE3 不计算：标着名字的值或对应名字的校验文件会提示不支持；没有标签、长度为 64 或 128 位的值按 SHA-256 / SHA-512 核对，不一致时另加说明。
+- 一次最多 1,000 个文件；打开的校验文件不超过 1 MB，粘贴的文本没有大小限制。
 - 不验证 GPG 签名。哈希一致只说明文件和列表相同；要确认列表本身来自发布方，请按 [Node.js 的说明](https://github.com/nodejs/node#verifying-binaries)或 [Ubuntu 的教程](https://ubuntu.com/tutorials/how-to-verify-ubuntu)验证签名。
-- MD5、SHA-1 可以被人为构造碰撞（SHA-1 的实例见 [SHAttered](https://shattered.io/)），CRC32 只能发现意外损坏。
+- MD5、SHA-1 可以被人为构造碰撞（SHA-1 的实例见 [Google 2017 年公布的首个 SHA-1 碰撞](https://security.googleblog.com/2017/02/announcing-first-sha1-collision.html)），CRC32 只能发现意外损坏。
 - 「选择文件夹」按钮在窄屏上隐藏；拖入文件夹在支持拖放的浏览器里都可用。
 - 要算一段文字的哈希，用[哈希生成器](/zh/tools/hash-generator/)；需要带密钥的哈希，用 [HMAC 生成器](/zh/tools/hmac-generator/)。

@@ -13,13 +13,13 @@ faqItems:
     answer: "No. A background worker in your browser reads the file from disk in 1 MB pieces and hashes it, and the page sends no request with the file. The tool does not save the file, the hashes or the checksum list, and stored values for this tool are deleted each time the page loads. The tool's only requests load its hashing scripts (file-hash-worker.js and the hash-wasm library) from this site, and the page loads neither Google Analytics nor AdSense."
   - id: "max-size"
     question: "Is there a file size limit?"
-    answer: "No fixed limit. The file is read as a stream, so memory use stays near 100 MB even for a 4 GB ISO. Time grows with size: on an Apple M1 Max, SHA-256 of a 1 GB file took about 4 seconds. Keep the tab open until it finishes."
+    answer: "No fixed limit. The file is read as a stream, so memory use does not grow with file size; the 1 GB test added about 100 MB. Time still grows with size: on an Apple M1 Max, SHA-256 of a 1 GB file took about 4 seconds. Keep the tab open until it finishes."
   - id: "algorithm"
     question: "Which hash should I use?"
     answer: "Use the one the publisher lists. Most projects publish SHA-256 (Node.js, Ubuntu); Firefox also publishes SHA-512. If you can choose, use SHA-256. MD5 and SHA-1 have practical collision attacks and CRC32 only detects accidental damage, so use them only when they are the only value offered."
   - id: "hash-length"
     question: "Why does the tool say my hash has 63 hex digits?"
-    answer: "Every supported algorithm has a fixed length: CRC32 8 hex digits, MD5 32, SHA-1 40, SHA-256 64, SHA-384 96, SHA-512 128. A value of another length lost or gained a character when it was copied. The tool reports the line and the length instead of guessing."
+    answer: "Every supported algorithm has a fixed length: CRC32 8 hex digits, MD5 32, SHA-1 40, SHA-256 64, SHA-384 96, SHA-512 128. A value of another length lost or gained a character when it was copied, except 56 digits, which is SHA-224: that algorithm is not computed here and is reported as unsupported. The tool reports the line and the length instead of guessing."
   - id: "safe"
     question: "Does a matching hash prove the download is safe?"
     answer: "It proves the file is byte-for-byte the one in the checksum list. If an attacker can change both the file and the list, both still match. Projects that sign the list (Node.js SHASUMS256.txt.asc, Ubuntu SHA256SUMS.gpg) let you check the list with GnuPG first."
@@ -59,14 +59,14 @@ Paste the whole line. The tool decodes the Base64 to the 128-digit SHA-512 `fbfd
 | GNU `sha256sum`, `shasum`, `SHA256SUMS` | `<hash>  file.iso`, `<hash> *file.iso` |
 | BSD and OpenSSL tags | `SHA256 (file.iso) = <hash>`, `SHA2-256(file.iso)= <hash>` |
 | Windows `certutil -hashfile file SHA256` | header line, hash line, "completed successfully" |
-| PowerShell [`Get-FileHash`](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/get-filehash) | table or `Format-List` output (upper-case hex) |
+| PowerShell [`Get-FileHash`](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/get-filehash) | `Format-List` output (the `Path` is used), or table output (rows carry no file name, so select every file in the table) |
 | GnuPG `--print-md`, old certutil | hex in groups of 2 or 8, wrapped over lines |
 | Base64, SRI, prefixed | `47DEQpj8…uFU=`, `sha512-…`, `sha256:<hash>` |
 | SFV (CRC32) | `game.zip 1A2B3C4D` |
 
 File names with a backslash or a line break are escaped in GNU lists: the line starts with `\` ([GNU coreutils output modes](https://www.gnu.org/software/coreutils/manual/html_node/cksum-output-modes.html)). The tool reads that form and writes it when it exports such names, and `shasum -a 256 -c` accepts its exported lists.
 
-Mistakes are named, not hidden. A hash with a stray `x` at the end gives "Line 1: "x" at character 65 is not a hex digit". A SHA-224 or SHA3 value is reported as unsupported. The earlier version of this tool removed spaces and searched for the computed hash inside the pasted text, so a value with an extra character still showed "Matches".
+Mistakes are named, not hidden. A hash with a stray `x` at the end gives "Line 1: "x" at character 65 is not a hex digit". A 56-digit value is reported as SHA-224, which is not computed, and a value labelled SHA3 or BLAKE2 is reported as unsupported. A bare digest of 64 or 128 digits cannot be told apart by length from SHA-256 or SHA-512, so the tool compares it as that algorithm and adds a note when it does not match. The earlier version of this tool removed spaces and searched for the computed hash inside the pasted text, so a value with an extra character still showed "Matches".
 
 ## Large Files
 
@@ -90,9 +90,9 @@ PiliApp compares values only, so a list that pairs the wrong hash with a file na
 
 ## Limits
 
-- **Algorithms:** SHA-256, SHA-1, SHA-384, SHA-512, MD5 and CRC32. SHA-224, SHA3, BLAKE2 (Arch Linux `b2sums.txt`) and BLAKE3 are not computed; such values are reported as unsupported.
-- **Up to 1,000 files** per session and checksum lists up to 1 MB.
+- **Algorithms:** SHA-256, SHA-1, SHA-384, SHA-512, MD5 and CRC32. SHA-224, SHA3, BLAKE2 (Arch Linux `b2sums.txt`) and BLAKE3 are not computed. A labelled value or a checksum file named for one of them is reported as unsupported; a bare 64- or 128-digit digest is compared as SHA-256 or SHA-512, with a note when it does not match.
+- **Up to 1,000 files** per session, and an opened checksum file up to 1 MB; pasted text has no size limit.
 - **No signature check.** A matching hash shows the file equals the list. To trust the list, verify its signature: Node.js explains this under [Verifying binaries](https://github.com/nodejs/node#verifying-binaries), and Ubuntu in [How to verify your Ubuntu download](https://ubuntu.com/tutorials/how-to-verify-ubuntu).
-- **MD5, SHA-1 and CRC32 are weak.** MD5 and SHA-1 collisions can be made on purpose ([SHAttered](https://shattered.io/) for SHA-1). They still catch a broken download.
+- **MD5, SHA-1 and CRC32 are weak.** MD5 and SHA-1 collisions can be made on purpose ([the first SHA-1 collision](https://security.googleblog.com/2017/02/announcing-first-sha1-collision.html), Google 2017). They still catch a broken download.
 - **Folder picking** uses the browser's folder dialog and is hidden on small screens; dropping a folder works wherever drag and drop does.
 - **Text, not files?** Use the [Hash Generator](/tools/hash-generator/). For a keyed hash, use the [HMAC Generator](/tools/hmac-generator/).
