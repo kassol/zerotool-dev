@@ -19,7 +19,7 @@ faqItems:
     answer: "ProtoJSON leaves out proto3 fields that hold their default value (0, empty string, false, first enum value) unless they are optional or in a oneof. Turn on Show fields with default values to print them. Fields whose numbers are not in the schema cannot appear in ProtoJSON at all; the Notes list each one with its byte offset."
   - id: "grpc"
     question: "How do I decode a gRPC or gRPC-Web payload?"
-    answer: "Paste it as captured. With gRPC frame set to Auto, the tool removes the 5-byte header of each message, decodes every message in the body, shows gRPC-Web trailers in the notes and gunzips frames whose compressed flag is set. grpc-web-text bodies are Base64 and can be pasted directly."
+    answer: "Paste it as captured. With gRPC frame set to Auto, the tool removes the 5-byte header of each message, decodes every message in the body, shows gRPC-Web trailers in the notes and gunzips frames whose compressed flag is set. A grpc-web-text body is Base64 of these frames and is read when the whole body is one Base64 stream; a body padded in separate chunks stops with a Base64 error at the inner padding."
   - id: "privacy"
     question: "Is my data uploaded?"
     answer: "Parsing, decoding and encoding run in your browser without uploading the schema, bytes or JSON for processing. Only option choices are saved in this browser’s localStorage; schemas, loaded files, bytes and JSON are not saved. Ctrl/⌘+L clears current inputs and loaded schema files while keeping settings; clearing this site’s browser data removes the settings. The page loads Google Analytics and AdSense. A successful committed input/settings change, mode/type selection, example or file action records only the tool name and action (decode, encode or sample), with unchanged results deduplicated per action. Typing, boot previews, errors and obsolete async results do not emit usage events. Copy writes the result to the clipboard; it has no separate usage event. Schema, bytes, JSON and file names are not event parameters."
@@ -75,7 +75,7 @@ With **No schema (raw decode)** the same bytes print with field numbers. The **p
 }
 ```
 
-`0x4033fd70a3d70a3d` is the 64-bit pattern of the double 19.99, and `5 { 1: 1790843400 2: 250000000 }` is the Timestamp's seconds and nanos. **JSON with other readings** shows each number as its other possible types (sint64, sfixed64, double, float), so you can tell a signed field from an unsigned one. Note that protoc prefers a nested message over a string: the two bytes `hi` read as field 13 with value 105. The JSON views show readable text as a string instead.
+`0x4033fd70a3d70a3d` is the 64-bit pattern of the double 19.99, and `5 { 1: 1790843400 2: 250000000 }` is the Timestamp's seconds and nanos. **JSON with other readings** shows each number as the other types its bytes could hold: `uint64`, `sint64` and `int64` for a varint, `fixed32`, `sfixed32` and `float` for a 4-byte value, and `fixed64`, `sfixed64` and `double` for an 8-byte value. You can tell a signed field from an unsigned one. Note that protoc prefers a nested message over a string: the two bytes `hi` read as field 13 with value 105. The JSON views show readable text as a string instead.
 
 ## Example: A gRPC-Web Response
 
@@ -135,10 +135,10 @@ The decoder and encoder were checked on 140 random messages against protoc 36.2 
 | int64, uint64, sint64, fixed64, sfixed64 | decimal string |
 | float, double | number; `"NaN"`, `"Infinity"`, `"-Infinity"`; floats print the shortest form (`0.1`, not `0.10000000149011612`) |
 | bytes | standard Base64 |
-| enum | name; a number the schema does not define stays a number |
-| Timestamp, Duration, FieldMask | `"2026-10-01T08:30:00Z"`, `"1.5s"`, `"user.displayName"` |
+| enum | name; in an open enum a number the schema does not define stays a number, and a closed enum keeps it as an unknown field |
+| Timestamp, Duration, FieldMask | `"2026-10-01T08:30:00Z"`, `"1.500s"`, `"user.displayName"` |
 | Struct, Value, ListValue, wrappers | plain JSON values |
-| Any | `"@type"` plus the fields, or `"value"` for a well-known type |
+| Any | `"@type"` plus the fields, or `"value"` for a well-known type; a type that is not in the schema is written as Base64 in `"value"` |
 | default values | left out for proto3 fields without presence |
 
 ## How It Differs From Other Online Decoders
@@ -151,6 +151,7 @@ Tested on 2026-10-02 with the order above. egohero.com and codertools.net use a 
 - **Unknown fields are not in the JSON.** ProtoJSON has no place for them; the notes list each with its field number, wire type and byte offset, and suggest message types that decode the bytes without any.
 - **Wrong type, valid output.** Bytes carry no type name, so decoding with the wrong message often succeeds with odd values. Check the notes for unknown fields.
 - **Nesting depth is 100** and opened files are limited to 2 MB. Compressed gRPC frames are gunzipped; other `grpc-encoding` values are not supported.
-- **proto2 and editions** (2023, 2024) are supported for groups, required fields, closed enums, extensions (`"[pkg.ext]"`), field presence, packed and expanded repeated fields and delimited messages. A proto3 `string` that is not valid UTF-8 is an error with its byte offset; use `bytes` for binary data.
+- **grpc-web-text is read as one Base64 stream.** The gRPC-Web protocol lets a proxy pad each Base64 chunk on its own; a body padded between messages stops with a Base64 error at the inner padding, so decode it to binary first.
+- **proto2 and editions** (2023, 2024) are supported. proto2 groups, `required` fields, closed enums and extensions (`"[pkg.ext]"`) work as in proto2; in editions it reads field presence (including `features.field_presence = LEGACY_REQUIRED`), closed enums, packed and expanded repeated fields and delimited messages from `features`, and extensions as in proto2. A proto3 `string` that is not valid UTF-8 is an error with its byte offset; use `bytes` for binary data.
 
 Related: inspect captured traffic in the [HAR Analyzer & Viewer](/tools/har-file-analyzer/), convert payloads with [Base64 Encode / Decode](/tools/base64/), and validate JSON with the [JSON Schema Validator](/tools/json-schema-validator/).

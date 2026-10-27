@@ -31,12 +31,12 @@ faqItems:
 
 ## QR コードの中身
 
-Wi-Fi の QR コードに入っているのは、`WIFI:` で始まる 1 行の文字列です。この書式は ZXing プロジェクトの [Barcode Contents](https://github.com/zxing/zxing/wiki/Barcode-Contents#wi-fi-network-config-android-ios-11) が最初に示し、のちに Wi-Fi Alliance が [WPA3 Specification v3.5](https://www.wi-fi.org/system/files/WPA3%20Specification%20v3.5.pdf) の第 7 節に WIFI URI として取り入れました。ツールは仕様のフィールド順に書き込みます。
+Wi-Fi の QR コードに入っているのは、`WIFI:` で始まる 1 行の文字列です。この書式は ZXing プロジェクトの [Barcode Contents](https://github.com/zxing/zxing/wiki/Barcode-Contents#wi-fi-network-config-android-ios-11) が最初に示し、Wi-Fi Alliance が WPA3 Specification 3.0 版で同じ形式を追加しました。[v3.5](https://www.wi-fi.org/system/files/WPA3%20Specification%20v3.5.pdf) の第 7 節が WIFI URI として定義しています。ツールは仕様のフィールド順に書き込みます。
 
 | フィールド | 書き込む値 | 意味 |
 |---|---|---|
-| `T` | `WPA`・`WEP`・`nopass` | セキュリティ。WPA3 仕様では、パスワードのあるネットワークは WPA2 でも WPA3 でも `WPA` |
-| `R` | `1`（WPA3 のみ） | Transition Disable。対応する端末は WPA2 に戻らない |
+| `T` | `WPA`・`WEP`・`nopass` | セキュリティ。WPA3 仕様では、パスワードのあるネットワークは WPA2 でも WPA3 でも `WPA`。`WEP` と `nopass` は ZXing と Android の値で、仕様は WEP を扱わず、オープンなネットワークでは `T` を省きます |
+| `R` | `1`（WPA3 のみ） | Transition Disable ビットマップ。ビット 0 は WPA3-Personal Only で、従った端末は PSK を無効にして WPA2 に戻りません |
 | `S` | ネットワーク名 | エスケープ済み |
 | `H` | `true` | ステルス SSID。送信されていない名前も端末が探す |
 | `P` | パスワード | エスケープ済み。オープンのときは書かない |
@@ -49,7 +49,7 @@ ZXing は `\`・`;`・`,`・`"`・`:` の 5 文字の前にバックスラッシ
 **店舗のゲスト用ネットワーク。** ネットワーク名 `ゲスト用Wi-Fi`、パスワード `omotenashi24`、WPA。ツールは `WIFI:T:WPA;S:ゲスト用Wi-Fi;P:omotenashi24;;` と書き込み、状態欄にバージョン 4（33 × 33 セル）、レベル M と表示します。名前は 9 文字ですが UTF-8 では 17 バイトです。日本語を含むので、ルーターが名前を UTF-8 で送信しているか確認するよう注意が出ます。
 
 {/* wqg-check: {"ssid":"FREE_SPOT","password":"key:2026,winter","payload":"WIFI:T:WPA;S:FREE_SPOT;P:key\\:2026\\,winter;;","warnings":["wEscape"]} */}
-**記号を含むパスワード。** パスワード `key:2026,winter` は `P:key\:2026\,winter` になります。WPA3 仕様は `;` をパーセントエンコードで書くよう定めていますが、Android の解析コードはパーセント記号を元に戻しません。食い違うのはこれらの文字だけなので、ツールは掲示前に一度読み取るよう注意を出します。
+**記号を含むパスワード。** パスワード `key:2026,winter` は `P:key\:2026\,winter` になります。WPA3 仕様は `;` をパーセントエンコードで書くよう定めていますが、Android の解析コードはパーセント記号を元に戻しません。こうした文字の扱いが食い違うため、ツールは掲示前に一度読み取るよう注意を出します。
 
 {/* wqg-check: {"ssid":"カフェ二階のゲスト用無線ネットワーク","password":"omotenashi24","warnings":["wSsidBytes","wSsidUtf8"],"bytes":54} */}
 **長すぎる名前。** `カフェ二階のゲスト用無線ネットワーク` は 18 文字、UTF-8 で 54 バイトです。IEEE 802.11 では SSID は最大 32 バイトなので、ルーターはこの名前を送信できません。日本語なら全角 10 文字（30 バイト）までが目安です。
@@ -85,6 +85,8 @@ ZXing は `\`・`;`・`,`・`"`・`:` の 5 文字の前にバックスラッシ
 
 ## 制限
 
-- WPA2 エンタープライズ（802.1X）の `E`・`A`・`I`・`PH2`、SAE-PK の公開鍵（`K`）には対応していません。
+- WPA2 エンタープライズ（802.1X）の `E`・`A`・`I`・`PH2` には対応していません。`I` は ZXing では企業版の ID、WPA3 仕様では SAE のパスワード識別子で、本ツールはどちらも書きません。
+- SAE-PK の公開鍵（`K`）と SAE のパスワード識別子（`I`）には対応していません。
 - `CAFE1234` のように 16 進数字だけの名前も、そのまま書き込みます。引用符で囲むと、現在の Android の解析コードは引用符も名前の一部として扱います。
+- 文字どおりの `%` の後に 16 進 2 桁が続く場合も、そのまま書き込みます。WPA3 仕様は `;` を `%3B` と書くため、この並びは曖昧で、パーセントエンコードを戻す読み取り側では別の名前になります。ツールは注意を表示します。
 - クワイエットゾーンは ISO/IEC 18004 が求める 4 セルで固定です。URL やテキストの QR コードは [QRコード作成](/ja/tools/qr-code-generator/)、強いパスワードは[パスワードジェネレーター](/ja/tools/password-generator/)を使ってください。

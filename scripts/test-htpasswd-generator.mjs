@@ -648,6 +648,10 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     p.openFile().resolve(original); await settleRead();
     p.get('htpw-check').click(); await settleRead();
     check('file check verifies the first matching entry', p.get('htpw-file-status').textContent === 'Line 2: the password matches alice (SHA-1 {SHA}).' && p.get('htpw-file-status').className.includes('success'));
+    p.type('htpw-file', 'alice:' + shaPassword + ':note\r\n');
+    p.get('htpw-check').click(); await settleRead();
+    check('a third field adds the Apache caveat to a match', p.get('htpw-file-status').textContent === 'Line 1: the password matches alice (SHA-1 {SHA}). Nginx accepts this line; Apache reads the third field as part of the hash, so the login fails there.' && p.get('htpw-file-status').className.includes('success'), p.get('htpw-file-status').textContent);
+    p.type('htpw-file', original);
     p.type('htpw-user', 'carol'); p.get('htpw-upsert').click(); await settleRead();
     const appended = original + 'carol:' + shaPassword + '\r\n';
     check('file update retains comments and CRLF while appending the new user', p.get('htpw-file').value === appended && !p.get('htpw-file-table').hidden);

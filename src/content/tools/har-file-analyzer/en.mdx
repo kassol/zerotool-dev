@@ -13,16 +13,16 @@ faqItems:
     answer: "In Chrome or Edge, open DevTools, go to the Network panel, reproduce the problem and click Export HAR (sanitized). Since Chrome 130 that default export leaves out Cookie, Set-Cookie and Authorization headers. To include them, turn on Settings > Preferences > Network > Allow to generate HAR with sensitive data, then long-click the Export button and choose Export HAR (with sensitive data). In Firefox, right-click the request list and choose Save All As HAR. In Safari, use the Export button in the Web Inspector Network tab."
   - id: "sanitized"
     question: "Is Chrome's sanitized export safe to share?"
-    answer: "Not always. Chrome removes three headers and the cookie lists, and nothing else. Tokens in URLs, passwords in request bodies, CSRF and API-key headers, and response bodies stay in the file. Load it here and check the Sensitive data card: it counts what is still there."
+    answer: "Not always. Chrome removes three headers and the cookie lists, and leaves out the data of Server-Sent Events messages; everything else stays. Tokens in URLs, passwords in request bodies, CSRF and API-key headers, and response bodies stay in the file. Load it here and check the Sensitive data card: it counts what is still there."
   - id: "privacy"
     question: "Is my HAR uploaded?"
     answer: "No. The file is read and parsed in this tab, and the page sends no request with its content. The tool does not save anything, stored values for this page are deleted each time it loads, and this page does not load Google Analytics or AdSense. Open another file or reload the page to drop it from memory."
   - id: "timings"
     question: "Why does entry.time not match the sum of the timings?"
-    answer: "HAR 1.2 says entry.time is the sum of blocked, dns, connect, send, wait and receive, with ssl counted inside connect. Firefox writes TCP time to connect and adds ssl separately, so its sum includes ssl. The tool checks which sum matches each entry and draws the bar to match. A difference larger than 1.5 ms is listed under Findings and in the Timing tab."
+    answer: "HAR 1.2 says entry.time is the sum of blocked, dns, connect, send, wait and receive, with ssl counted inside connect. Firefox writes TCP time to connect and adds ssl separately, so its sum includes ssl. The tool checks which sum matches each entry and draws the bar to match. A difference of 1.5 ms or more is listed under Findings and in the Timing tab."
   - id: "export"
     question: "Which requests can I export or copy?"
-    answer: "All of them, or only the ones shown in Requests after you filter by URL text, status class and resource type. The export is a HAR 1.2 file that DevTools can import again. Copy as cURL uses the same filter and uses redacted values unless you turn that off."
+    answer: "All of them, or only the ones shown in Requests after you filter by URL text, status class and resource type. The export keeps the log.version of the input file (browsers write 1.2), and DevTools can import it again. Copy as cURL uses the same filter and uses redacted values unless you turn that off."
 ---
 
 ## Example: Redacting a Login Capture
@@ -46,14 +46,14 @@ https://api.example.com/v1/orders?page=1&access_token=[redacted]
 authorization: Bearer [redacted]
 ```
 
-The same session id also appears in the account page HTML and in an analytics URL as `sid=`. Both are replaced, because the export searches the whole file for every value it removed. The report lists what was replaced and confirms that the saved file was parsed again with none of the removed values left.
+The same session id also appears in the account page HTML and in an analytics URL as `sid=`. Both are replaced, because the export searches the whole file for each removed value that looks like a generated secret: 8 or more characters with letters and digits, or 16 or more characters, and no spaces. The report lists what was replaced and confirms that the saved file was parsed again with none of the removed values left.
 
 ## What the Redacted Copy Removes
 
 - Values of `Cookie`, `Set-Cookie` and `Authorization` (the scheme word, such as `Bearer`, is kept), and every value in the `cookies` lists.
 - Headers, URL parameters (query and fragment), form fields, multipart parts and JSON keys at any depth whose names look like credentials: token, secret, password, session, api key, signature, csrf, `code`, `sid` and similar. `token_type` and `Access-Control-Allow-Credentials` are left alone.
 - Token-shaped strings anywhere else: JWTs, `Bearer` values and the provider key formats used by the [Secret Redactor](/tools/secret-redactor/), such as GitHub, Stripe and AWS keys.
-- Optionally: all request bodies, all response bodies and WebSocket messages, and server IP addresses. Removing response bodies also makes the file much smaller.
+- Optionally: all request bodies, all response bodies and WebSocket messages, server IP addresses and client IP headers. Removing response bodies also makes the file much smaller.
 
 Personal data such as an email address in a body is not a credential and is kept. The report says how many request and response bodies are still in the file; add field names like `email` to **Also redact these names**, or remove the bodies.
 
@@ -61,7 +61,7 @@ This matters because a HAR is a copy of a logged-in session. In October 2023, an
 
 ## Reading the Waterfall
 
-Each bar starts at the request's `startedDateTime` and has up to seven parts taken from the [HAR 1.2 `timings` object](https://w3c.github.io/web-performance/specs/HAR/Overview.html): queued or stalled (`blocked`), DNS, connect, TLS (`ssl`), send, wait (time to first byte) and receive. A value of `-1` means the phase did not happen, for example on a reused connection, and is shown as N/A. Vertical lines mark DOMContentLoaded and load from the page timings.
+Each bar starts at the request's `startedDateTime` and has up to seven parts taken from the [HAR 1.2 `timings` object](https://www.softwareishard.com/blog/har-12-spec/): queued or stalled (`blocked`), DNS, connect, TLS (`ssl`), send, wait (time to first byte) and receive. A value of `-1` means the phase did not happen, for example on a reused connection, and is shown as N/A. Vertical lines mark DOMContentLoaded and load from the page timings.
 
 Chrome and Safari count TLS inside `connect`, as the spec says, so the bar splits that part into TCP and TLS. Firefox [measures them separately](https://github.com/mozilla-firefox/firefox/blob/main/devtools/shared/network-observer/NetworkTimings.sys.mjs) and adds both to `time`:
 
@@ -71,7 +71,7 @@ Chrome and Safari count TLS inside `connect`, as the spec says, so the bar split
 connect 18 ms + ssl 21 ms (time 151 ms = sum of all seven)
 ```
 
-Without that check, Firefox captures would show bars 21 ms too short and a timing error on every HTTPS request. Chrome also writes `_blocked_queueing`; the Timing tab shows it as the queueing part of `blocked`. Transfer sizes come from `_transferSize` in Chrome and Safari, and from `bodySize` in Firefox, which stores the whole transfer there.
+Without that check, Firefox captures would show bars 21 ms too short and a timing error on every HTTPS request that opened a new connection. Chrome also writes `_blocked_queueing`; the Timing tab shows it as the queueing part of `blocked`. Transfer sizes come from `_transferSize`, which Chrome writes; without it the tool adds `headersSize` and `bodySize`. For Firefox it reads `bodySize`, which holds the whole transfer.
 
 ## cURL Commands
 
@@ -97,7 +97,7 @@ On 2026-10-01 we loaded the same file into each tool and searched the redacted o
 
 | Tool | Left in the output |
 |---|---|
-| Chrome DevTools, Export HAR (sanitized) | Everything except the Cookie, Set-Cookie and Authorization headers: URL token, password, CSRF header, session id in HTML |
+| Chrome DevTools, Export HAR (sanitized) | Everything except the Cookie, Set-Cookie and Authorization headers and the cookie lists: URL token, password, CSRF header, session id in HTML |
 | Google Admin Toolbox HAR Analyzer, redact button | Password in the JSON body, `x-session-id`, the nested `refresh_token`, session id in HTML and in `sid=` |
 | Cloudflare HAR Sanitizer, default ticks | Session cookie, password, CSRF header, `x-session-id`, `refresh_token`; the JWT keeps its header and payload |
 | This tool, default options | None of the seven; the email address is kept and the kept bodies are reported |

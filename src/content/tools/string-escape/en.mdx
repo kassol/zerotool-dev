@@ -20,7 +20,7 @@ faqItems:
     answer: "Japanese and Korean Windows fonts draw the backslash (U+005C) as ¥ or ₩. If you retype an escape from such a screen, you may type the real yen sign U+00A5 or won sign U+20A9, which is not an escape character. The tool keeps the text and adds a note naming the character."
   - question: "Is the SQL format safe against SQL injection?"
     id: "sql-injection"
-    answer: "No. Doubling single quotes produces a valid string literal, but OWASP lists escaping as strongly discouraged because it depends on the database, its settings and the character set. Use parameterized queries in application code. The SQL format is for writing one-off scripts, fixtures and migration files by hand."
+    answer: "No. Doubling single quotes produces a valid string literal, but OWASP lists escaping as strongly discouraged: it depends on the SQL dialect and configuration (for example, NO_BACKSLASH_ESCAPES) and on the character set. Use parameterized queries in application code. The SQL format is for writing one-off scripts, fixtures and migration files by hand."
   - question: "Why does MySQL need different escaping from other databases?"
     id: "sql-dialects"
     answer: "Standard SQL only doubles the single quote and treats the backslash as an ordinary character; PostgreSQL (with the default standard_conforming_strings = on), SQLite, SQL Server and Oracle work this way. MySQL and MariaDB treat the backslash as an escape character unless NO_BACKSLASH_ESCAPES is set, so the \\n in C:\\new is read as a line break. Choose the MySQL / MariaDB dialect to escape the backslash too; when you escape in the Standard dialect, the status line warns if the text contains a backslash."
@@ -40,7 +40,7 @@ Input:  {\"level\":\"error\",\"msg\":\"disk \\u2192 full\"}
 Output: {"level":"error","msg":"disk \u2192 full"}
 ```
 
-The output is JSON again, so `\u2192` stays escaped: it was written as `\\u2192` in the input, one level deeper. Run Unescape a second time on the `msg` value to get the arrow. This one-level-at-a-time behavior is what [`JSON.parse`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON/parse) does, and the tool checks every input against it.
+The output is JSON again, so `\u2192` stays escaped: it was written as `\\u2192` in the input, one level deeper. Run Unescape a second time on the `msg` value to get the arrow. This one-level-at-a-time behavior is what [`JSON.parse`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON/parse) does, and the test suite checks the output against it.
 
 ## Example: a Windows Path in Three Formats
 
@@ -79,7 +79,7 @@ Each format follows its specification, and `scripts/test-string-escape.mjs` in t
 
 JSON and JavaScript escapes look alike but differ. JSON has only `\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t` and `\uXXXX`. JavaScript also has `\'`, `\v`, `\0`, `\xHH`, `\u{…}` and line continuations, and it turns an unknown escape such as `\d` into the letter itself. The JSON format escapes exactly like `JSON.stringify` and reports `\'` or `\x` in JSON input as errors.
 
-Three details from these rules are easy to get wrong. A NUL followed by a digit must be written `\x00` in JavaScript: `\0` followed by `1` is the legacy octal escape `\01`, a SyntaxError in strict mode. In Java, a line break must be `\n`, never `\u000a`, because javac replaces Unicode escapes before it reads the string ([JLS §3.10.5](https://docs.oracle.com/javase/specs/jls/se21/html/jls-3.html#jls-3.10.5)). In HTML, an emoji such as 😀 needs one reference, `&#x1F600;`; two references for its UTF-16 halves decode to two replacement characters.
+Three details from these rules are easy to get wrong. In JavaScript, the tool writes a NUL followed by a digit as `\x00`: `\0` followed by `1` would be the legacy octal escape `\01`, a SyntaxError in strict mode (`\u0000` also works). In Java, a line break must be `\n`, never `\u000a`, because javac replaces Unicode escapes before it reads the string ([JLS §3.10.5](https://docs.oracle.com/javase/specs/jls/se21/html/jls-3.html#jls-3.10.5)). In HTML, a numeric reference to an emoji such as 😀 must be one reference, `&#x1F600;`; two references for its UTF-16 halves decode to two replacement characters.
 
 ## Errors and Notes
 
@@ -99,7 +99,7 @@ The tool does not guess. When the input is not valid for the chosen format, the 
 | `a.b` | Regex | `.` is a pattern operator, not a literal character |
 | `$HOME/notes.txt` | Shell | `$HOME` is expanded by the shell, so the value depends on the environment |
 
-Notes do not block the result. CSV warns when a value starts with `=`, `+`, `-`, `@`, a tab or a line break, which spreadsheet apps can run as a formula ([OWASP CSV Injection](https://owasp.org/www-community/attacks/CSV_Injection)). The formula guard offers OWASP's two fixes: a `'` prefix inside quotes, or a tab prefix, which OWASP describes as more reliable in Excel. The SQL format always repeats OWASP's advice that escaping does not reliably prevent SQL injection; use parameterized queries ([OWASP SQL Injection Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html)).
+Notes do not block the result. CSV warns when a value starts with `=`, `+`, `-`, `@`, a tab or a line break (or the full-width forms ＝ ＋ － ＠), which spreadsheet apps can run as a formula ([OWASP CSV Injection](https://owasp.org/www-community/attacks/CSV_Injection)). The formula guard offers two OWASP approaches: a `'` prefix inside quotes, or the tab prefix OWASP gives as the Excel-resistant form. The SQL format always repeats OWASP's advice that escaping does not reliably prevent SQL injection; use parameterized queries ([OWASP SQL Injection Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html)).
 
 ## How It Compares
 
@@ -118,10 +118,10 @@ To see which invisible characters a string contains before escaping it, use the 
 
 ## Limits
 
-- The input is one string value. CSV unescape reads one field, not a whole file; Shell unescape reads one argument and stops at unquoted whitespace.
+- The input is one string value. CSV unescape reads one field: a quoted field loses its quotes, a value with several unquoted fields comes back unchanged with a note, and a whole file is not read. Shell unescape reads one argument and reports unquoted whitespace between words as an error; trailing whitespace is ignored.
 - Python `\N{NAME}` escapes are reported, not decoded: the Unicode name table is not included.
 - HTML escape covers text and quoted attribute values. JavaScript inside `<script>`, CSS and URLs need their own encoding.
 - Regex escape is for use outside character classes. Python's verbose mode (`re.X`) also treats spaces and `#` as syntax.
 - Characters that XML 1.0 forbids (most C0 controls, U+FFFE, U+FFFF, unpaired surrogates) cannot be escaped and are reported.
 - Shell `$'…'` follows bash, including `\u` and `\U`; POSIX.1-2024 defines the form without them.
-- About 360,000 characters convert in well under a second; much larger inputs work but make the text boxes slow to redraw.
+- About 360,000 characters convert in about a second on a desktop machine (the test allows 1.5 s); much larger inputs work but make the text boxes slow to redraw.

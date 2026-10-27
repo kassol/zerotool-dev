@@ -13,16 +13,16 @@ faqItems:
     answer: "Chrome / Edge は DevTools の Network（ネットワーク）パネルで事象を再現し、エクスポートボタンを押します。Chrome 130 以降の既定の書き出しには Cookie、Set-Cookie、Authorization ヘッダーが含まれません。含める場合は設定の「ネットワーク」で「センシティブ データを含む HAR の生成を許可する」をオンにし、エクスポートボタンを長押しして「HAR（センシティブ データを含む）をエクスポート...」を選びます。Firefox はリクエスト一覧の右クリックメニュー（英語表示では Save All As HAR）、Safari は Web インスペクタの「ネットワーク」タブの書き出しボタンを使います。"
   - id: "sanitized"
     question: "Chrome の既定の書き出しなら、そのまま共有できますか？"
-    answer: "そうとは限りません。Chrome が取り除くのは 3 つのヘッダーと Cookie の一覧だけで、URL のトークン、リクエストボディのパスワード、CSRF トークンや API キーのような独自ヘッダー、レスポンスボディは残ります。ファイルを読み込むと「このファイルに含まれる機密情報」に残っている件数が出ます。"
+    answer: "そうとは限りません。Chrome が取り除くのは 3 つのヘッダーと Cookie の一覧、それに Server-Sent Events メッセージのデータだけで、URL のトークン、リクエストボディのパスワード、CSRF トークンや API キーのような独自ヘッダー、レスポンスボディは残ります。ファイルを読み込むと「このファイルに含まれる機密情報」に残っている件数が出ます。"
   - id: "privacy"
     question: "HAR はアップロードされますか？"
     answer: "されません。ファイルはこのタブの中で読み込んで解析し、内容を含むリクエストは送りません。保存もせず、このページ用に保存された値もページを開くたびに削除します。このツールのページは Google アナリティクスと AdSense を読み込みません。「別のファイルを開く」かページの再読み込みでメモリから消えます。"
   - id: "timings"
     question: "entry.time とタイミングの合計が合わないのはなぜですか？"
-    answer: "HAR 1.2 では entry.time は blocked・dns・connect・send・wait・receive の合計で、ssl は connect に含まれます。Firefox は connect に TCP の時間だけを入れ、ssl を別に足します。本ツールはエントリごとにどちらの合計が合うかを見て描画します。1.5 ms を超える差は「気づいた点」と「タイミング」タブに出ます。"
+    answer: "HAR 1.2 では entry.time は blocked・dns・connect・send・wait・receive の合計で、ssl は connect に含まれます。Firefox は connect に TCP の時間だけを入れ、ssl を別に足します。本ツールはエントリごとにどちらの合計が合うかを見て描画します。1.5 ms 以上の差は「気づいた点」と「タイミング」タブに出ます。"
   - id: "export"
     question: "一部のリクエストだけを書き出せますか？"
-    answer: "できます。「リクエスト」で URL の語句、ステータス、種類で絞り込み、「マスクして書き出す」で「表示中の N 件」を選びます。書き出したファイルは HAR 1.2 なので DevTools で読み込み直せます。cURL のコピーも同じ絞り込みに従います。"
+    answer: "できます。「リクエスト」で URL の語句、ステータス、種類で絞り込み、「マスクして書き出す」で「表示中の N 件」を選びます。書き出したファイルは入力の log.version をそのまま使う（ブラウザーは 1.2）ので、DevTools で読み込み直せます。cURL のコピーも同じ絞り込みに従います。"
 ---
 
 ## サポートに「機密データを含む HAR」を求められたら
@@ -46,13 +46,13 @@ set-cookie: session=[redacted]; Path=/; Secure; HttpOnly; SameSite=Lax
 - Cookie、Set-Cookie、Authorization の値（Bearer などの方式名は残す）と、`cookies` 一覧のすべての値。
 - 名前が認証情報らしいヘッダー、URL パラメータ（クエリとフラグメント）、フォーム、multipart、JSON のキー（深さを問わない）。token、secret、password、session、api key、signature、csrf、`code`、`sid` などが対象で、`token_type` や `Access-Control-Allow-Credentials` は対象外です。
 - それ以外の場所にあるトークン形式の文字列。JWT、Bearer の値、GitHub・Stripe・AWS などのキー形式（[APIキーマスキング](/ja/tools/secret-redactor/) と同じ規則）です。
-- 取り除いた値がファイルの別の場所（HTML や別の URL）に出てくれば、そこも置き換えます。保存前にファイルを読み込み直し、取り除いた値が 1 つも残っていないことを確かめます。
+- 取り除いた値のうち生成された秘密情報らしいもの（8 文字以上で英字と数字を含む、または 16 文字以上、空白なし）がファイルの別の場所（HTML や別の URL）に出てくれば、そこも置き換えます。保存前にファイルを読み込み直し、取り除いた値が 1 つも残っていないことを確かめます。
 
 メールアドレスのような個人情報は認証情報ではないので残します。残したボディの件数を報告に出すので、必要なら「追加でマスクする名前」に `email` などを入れるか、ボディごと削除してください。
 
 ## ウォーターフォールの見方
 
-各バーは `startedDateTime` から始まり、[HAR 1.2 の `timings`](https://w3c.github.io/web-performance/specs/HAR/Overview.html) に沿って最大 7 つに分かれます。キュー / ストール（`blocked`）、DNS、接続、TLS（`ssl`）、送信、待機（最初のバイトまで）、受信です。`-1` はそのフェーズがなかったことを示し、「該当なし」と表示します。縦線は DOMContentLoaded と load です。
+各バーは `startedDateTime` から始まり、[HAR 1.2 の `timings`](https://www.softwareishard.com/blog/har-12-spec/) に沿って最大 7 つに分かれます。キュー / ストール（`blocked`）、DNS、接続、TLS（`ssl`）、送信、待機（最初のバイトまで）、受信です。`-1` はそのフェーズがなかったことを示し、「該当なし」と表示します。縦線は DOMContentLoaded と load です。
 
 Chrome と Safari は仕様どおり TLS を `connect` に含めるので、バーではその部分を TCP と TLS に分けます。Firefox は 2 つを別々に記録し、`time` には両方を足します。
 
@@ -62,7 +62,7 @@ Chrome と Safari は仕様どおり TLS を `connect` に含めるので、バ�
 connect 18 ms + ssl 21 ms (time 151 ms = sum of all seven)
 ```
 
-仕様の式だけで計算するツールでは、Firefox の HTTPS リクエストのバーが 21 ms 短くなり、すべてに「合計が合わない」と出ます。転送量は Chrome と Safari では `_transferSize`、Firefox では転送量全体が入っている `bodySize` から読みます。
+仕様の式だけで計算するツールでは、新しく接続した Firefox の HTTPS リクエストのバーが 21 ms 短くなり、それらすべてに「合計が合わない」と出ます。転送量は `_transferSize`（Chrome が書き出す）から読み、このフィールドがないときは `headersSize` と `bodySize` を足します。Firefox は転送量全体が入っている `bodySize` から読みます。
 
 ## cURL をコピーするとき
 
@@ -90,7 +90,7 @@ Python や Go のコードにするなら [cURL コード変換](/ja/tools/curl-
 |---|---|
 | haranalyzer.com（日本語版）の「機密除去済みHARをダウンロード」 | HTTP/2 の `:path` ヘッダーに残った `access_token`、`sid=` のセッション ID、`x-session-id`。ボディはすべて削除 |
 | Google Admin Toolbox HAR Analyzer のマスクボタン | リクエストボディのパスワード、`x-session-id`、入れ子の `refresh_token`、HTML と `sid=` のセッション ID |
-| Chrome の既定の書き出し | Cookie・Set-Cookie・Authorization の 3 ヘッダー以外はすべて |
+| Chrome の既定の書き出し | Cookie・Set-Cookie・Authorization の 3 ヘッダーと Cookie 一覧以外はすべて |
 | 本ツール（既定の設定） | 7 つとも置き換え済み。メールアドレスは残り、残したボディの件数を報告 |
 
 どのツールもファイルをサーバーへ送っていませんでした。ボディを丸ごと消すと手軽ですが、不具合の原因がレスポンスの中身にあることもあります。本ツールは既定では認証情報だけを置き換え、ボディの削除は選べるようにしています。

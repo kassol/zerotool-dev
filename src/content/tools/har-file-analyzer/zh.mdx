@@ -13,16 +13,16 @@ faqItems:
     answer: "Chrome / Edge：打开开发者工具的 Network（网络）面板，复现问题后点工具栏的 Export HAR (sanitized)。从 Chrome 130 起，这个默认导出不含 Cookie、Set-Cookie 和 Authorization 请求头；需要包含时，先在 Settings > Preferences > Network 勾选 Allow to generate HAR with sensitive data，再长按导出按钮选 Export HAR (with sensitive data)。Firefox 在请求列表上右键，选导出 HAR 的菜单项（英文界面为 Save All As HAR）；Safari 用网页检查器「网络」标签页的导出按钮。"
   - id: "sanitized"
     question: "Chrome 导出的 sanitized 版本能直接发给别人吗？"
-    answer: "不一定。Chrome 只删掉三个请求头和 Cookie 列表，URL 里的 token、请求体里的密码、CSRF 和 API Key 之类的自定义请求头、响应体都还在。把文件拖进来看「文件中的敏感数据」卡片，上面列出还剩多少。"
+    answer: "不一定。Chrome 只删掉三个请求头和 Cookie 列表，并去掉 Server-Sent Events 消息里的数据，其余都不动。URL 里的 token、请求体里的密码、CSRF 和 API Key 之类的自定义请求头、响应体都还在。把文件拖进来看「文件中的敏感数据」卡片，上面列出还剩多少。"
   - id: "privacy"
     question: "HAR 会被上传吗？"
     answer: "不会。文件只在当前标签页里读取和解析，页面不会发出任何带文件内容的请求，也不会保存；本页每次加载时还会删除浏览器里为它保存过的值。这个工具页不加载 Google Analytics 和 AdSense。点「打开其他文件」或刷新页面即可从内存中清掉。"
   - id: "timings"
     question: "为什么 entry.time 和各阶段之和对不上？"
-    answer: "HAR 1.2 规定 entry.time 等于 blocked、dns、connect、send、wait、receive 之和，ssl 算在 connect 里。Firefox 的 connect 只记 TCP，ssl 单独计入总和。工具会按每个条目实际对得上的算法来画条形；相差超过 1.5 毫秒的条目列在「发现」里，「时序」标签页写出差值。"
+    answer: "HAR 1.2 规定 entry.time 等于 blocked、dns、connect、send、wait、receive 之和，ssl 算在 connect 里。Firefox 的 connect 只记 TCP，ssl 单独计入总和。工具会按每个条目实际对得上的算法来画条形；相差 1.5 毫秒或以上的条目列在「发现」里，「时序」标签页写出差值。"
   - id: "export"
     question: "能只导出一部分请求吗？"
-    answer: "能。在「请求」里按 URL 关键字、状态码类别和资源类型筛选，然后在「脱敏与导出」选「当前显示的 N 个」。导出的是标准 HAR 1.2 文件，DevTools 可以重新导入。「复制为 cURL」也按同一筛选结果生成。"
+    answer: "能。在「请求」里按 URL 关键字、状态码类别和资源类型筛选，然后在「脱敏与导出」选「当前显示的 N 个」。导出文件沿用输入文件的 log.version（浏览器写 1.2），DevTools 可以重新导入。「复制为 cURL」也按同一筛选结果生成。"
 ---
 
 ## 脱敏前后对照
@@ -46,7 +46,7 @@ https://api.example.com/v1/orders?page=1&access_token=[redacted]
 authorization: Bearer [redacted]
 ```
 
-同一个会话 ID 还出现在账户页的 HTML 和统计请求的 `sid=` 参数里，也都被替换：导出时会在整个文件里查找每一个去掉的值。导出后工具把文件重新解析一遍，报告里写明「去掉的值一个都没剩下」才算完成。
+同一个会话 ID 还出现在账户页的 HTML 和统计请求的 `sid=` 参数里，也都被替换：导出时会在整个文件里查找每个去掉的值，条件是它像生成出来的密钥（8 个字符以上且含字母和数字，或 16 个字符以上，且不含空格）。导出后工具把文件重新解析一遍，报告里写明「去掉的值一个都没剩下」才算完成。
 
 邮箱这类个人信息不是凭据，默认保留；报告会写出还保留了几个请求体和响应体。需要时在「另外脱敏这些名称」里填 `email`、`phone`，或直接删除请求体 / 响应体。去掉的具体规则见工具里的说明；令牌格式（JWT、Bearer、GitHub / Stripe / AWS 等密钥）与 [API Key 脱敏工具](/zh/tools/secret-redactor/) 用同一套规则。
 
@@ -67,7 +67,7 @@ api.example.com only, response bodies removed: 8744 bytes (3 requests)
 
 ## 瀑布图怎么读
 
-每根条形从请求的 `startedDateTime` 开始，最多分七段，对应 [HAR 1.2 的 `timings`](https://w3c.github.io/web-performance/specs/HAR/Overview.html)：排队 / 阻塞（`blocked`）、DNS、连接、TLS（`ssl`）、发送、等待（首字节时间）、接收。值为 `-1` 表示没有这个阶段，例如复用的连接没有 DNS 和连接时间，显示为「不适用」。两条竖线是 DOMContentLoaded 和 load。
+每根条形从请求的 `startedDateTime` 开始，最多分七段，对应 [HAR 1.2 的 `timings`](https://www.softwareishard.com/blog/har-12-spec/)：排队 / 阻塞（`blocked`）、DNS、连接、TLS（`ssl`）、发送、等待（首字节时间）、接收。值为 `-1` 表示没有这个阶段，例如复用的连接没有 DNS 和连接时间，显示为「不适用」。两条竖线是 DOMContentLoaded 和 load。
 
 Chrome 和 Safari 按规范把 TLS 算在 `connect` 里，条形把这一段拆成 TCP 和 TLS；Firefox 把两者分开记，`time` 里两者都算：
 
@@ -77,7 +77,7 @@ Chrome 和 Safari 按规范把 TLS 算在 `connect` 里，条形把这一段拆�
 connect 18 ms + ssl 21 ms (time 151 ms = sum of all seven)
 ```
 
-只按规范计算的工具会把这类 Firefox 条目的条形画短 21 毫秒，并把每个 HTTPS 请求都标成时间对不上。传输量取 Chrome / Safari 的 `_transferSize`；Firefox 把整个传输量写在 `bodySize` 里，工具按它读取。
+只按规范计算的工具会把这类 Firefox 条目的条形画短 21 毫秒，并把每个新建连接的 HTTPS 请求都标成时间对不上。传输量取 `_transferSize`（Chrome 写入的这个字段）；没有该字段时，工具把 `headersSize` 和 `bodySize` 相加。Firefox 把整个传输量写在 `bodySize` 里，工具按它读取。
 
 ## 和其他 HAR 工具的区别
 
@@ -87,7 +87,7 @@ connect 18 ms + ssl 21 ms (time 151 ms = sum of all seven)
 |---|---|
 | toolbox365.cn「HAR 文件在线分析」的脱敏导出 | URL 里的 `access_token`（含 HTTP/2 的 `:path` 请求头）、`sid=` 参数里的会话 ID、`x-session-id`；请求体和响应体整段删除 |
 | Google Admin Toolbox HAR Analyzer 的脱敏按钮 | 请求体里的密码、`x-session-id`、嵌套的 `refresh_token`、HTML 和 `sid=` 里的会话 ID |
-| Chrome「Export HAR (sanitized)」 | 除 Cookie、Set-Cookie、Authorization 三个请求头外全部保留 |
+| Chrome「Export HAR (sanitized)」 | 除 Cookie、Set-Cookie、Authorization 三个请求头和 Cookie 列表外全部保留 |
 | 本工具（默认选项） | 7 个都已替换；邮箱保留，报告写明保留的请求 / 响应体数量 |
 
 三者都没有把文件传到服务器。整段删除请求体最省事，但出问题的往往正是某个接口的响应内容；本工具默认只替换凭据，响应体可以选择删除。
