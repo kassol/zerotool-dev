@@ -181,6 +181,8 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 
 ## 变更日志
 
+- 2026-10-27 — 清理 backlog #29 的两条 CSS 事项。1）全站基础样式从 `BaseLayout.astro` 的 `<style is:global>` 移入 `src/styles/site.css`，由 BaseLayout 与生成的全部工具路由入口先 import；工具页 CSS 顺序因此固定为 site → 共享工具（tool-common / ToolLayout / ShareButtons / AdUnit）→ 本工具。`check-tool-css-order.mjs` 改为从全部非工具页取 CSS 交集识别全站样式，要求它先于工具 CSS，并新增缺全站 CSS、`site.<hash>.css` 命名与 `_slug_` 残留检查。2）新增 `scripts/rename-css-chunks.mjs`，按引用页面把 Astro 按首个父页面命名的 chunk 改为 `site.*` / `article.*` / `adunit.*` / `tool-shared.*` / `home.*` / `not-found.*`，本工具 CSS 保留工具名，并重写全部 HTML 引用；`npm run build` 在 astro build 后运行它。构建实测 845 个 HTML、9 个 chunk 重命名，564 个工具页顺序检查通过；`test-check-tool-css-order.mjs` 33 项、`test-rename-css-chunks.mjs` 27 项通过。
+
 - 2026-10-27 — 提交、推送与发版约定：每个用户可见改动批次直接 commit 并 push 到 `origin/master`，随后按 SemVer 打 tag 发布（修正为 patch，新功能为 minor），不再逐次等待确认。同日完成 W6 第二批 `ssl-certificate-decoder`、`cookie-parser`、`bcrypt-generator`、`hmac-generator`、`json-schema-validator` 的四语核对，共 488 条陈述、102 条修正，并修复 SSL 的 PKCS #12 PEM 持久化缺口，范围与证据见 `docs/2026-10-27-w6-batch-2.md`。本批随 v1.142.1 发布。
 
 - 2026-10-24 — 完成 S2-10g / 10i / 10j 的实现集成，范围与验收见 `docs/2026-10-24-s2-closure.md`。盘点全部 141 个工具的事件名、动作与触发时机，保留 45 个历史别名；31 个工具修正自动输入、初始渲染或异步操作尚未成功就记使用的路径，相关四语隐私题同步。Regex / RSA 报错本地化、RSA 复制后备、HTTP Header 请求行与摘要、CSS 数字越界处理补齐。MDX 标注忽略代码内标题，增加 GFM 表格空行检查与普通零宽示例复算；共享读者仍可读取行内代码。公开文案检查扩充到四语数据位置承诺，FAQ 按真实 YAML 检查结构与数量，统一 About、组件、工具页、博客与 i18n 的处理和隐私说明。114 个受保护引擎区块保持逐字不变。日报采集修复与补档证据保留在仓库外的 metrics 目录。

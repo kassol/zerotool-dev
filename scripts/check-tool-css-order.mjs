@@ -1,22 +1,27 @@
-// Tool page CSS order check (runs after astro build)
+// Tool page CSS order check (runs after rename-css-chunks.mjs)
 //
-// Read:  dist/tools/*/index.html, dist/{zh,ja,ko}/tools/*/index.html, dist/about/index.html
+// Read:  dist/tools/*/index.html, dist/{zh,ja,ko}/tools/*/index.html, all other dist HTML
 // Write: stdout only
-// Exit:  0 if every tool page links its shared tool CSS before its own tool CSS and has no
-//        inline <style> in <head>, 1 otherwise
+// Exit:  0 if every tool page links site CSS first, then shared tool CSS, then its own
+//        tool CSS, and has no inline <style> in <head>, 1 otherwise
 //
 // Each tool page has its own injected route (toolRoutes() in astro.config.mjs), so its CSS
-// comes in parts. Astro orders the parts by an import-position heuristic, and the tool
-// entry imports tool-common.css first to put the shared part first. The tool component
-// styles must come after the shared tool styles (tool-common.css, ToolLayout, ShareButtons),
-// as they did when all tool CSS was one file; otherwise equal-specificity rules change winners.
+// comes in parts. Astro orders the parts by an import-position heuristic; the generated
+// tool entry imports src/styles/site.css first, then ToolLayout and tool-common.css, then
+// the tool component. The tool component styles must come after the shared tool styles
+// (tool-common.css, ToolLayout, ShareButtons), as they did when all tool CSS was one file;
+// otherwise equal-specificity rules change winners. Site CSS must come before both so a
+// tool rule wins over a site rule of equal specificity.
 //
 // CSS resources are <link rel="stylesheet"> hrefs and inline <style> blocks, in document order.
-// - site-wide: also on dist/about/index.html (BaseLayout) — not checked
+// - site-wide: on every non-tool HTML page (BaseLayout) — must come before tool CSS
 // - shared tool CSS: on the pages of 2 or more tools (and not site-wide)
 // - own tool CSS: on the pages of 1 tool only
-// Every shared tool resource must come before every own tool resource on the page.
+// Every site resource must come before every tool resource, and every shared tool resource
+// before every own tool resource on the page.
 // A page with own tool CSS but no shared tool CSS also fails: the order cannot be checked.
+// CSS files must not carry the first-parent chunk names: `_slug_.*` is the blog route and a
+// shared chunk named after one tool is not that tool's CSS (rename-css-chunks.mjs fixes both).
 //
 // A tool page must have no <style> in <head>. astro.config.mjs sets
 // build.inlineStylesheets: 'never', so all bundled CSS is linked as files. If Astro inlines
@@ -86,6 +91,17 @@ export function checkOrder(pages, siteWide) {
     }
     if (own.length === 0) continue;
     checked++;
+    const site = [];
+    page.css.forEach((r, i) => {
+      if (siteWide.has(r)) site.push(i);
+    });
+    if (site.length !== siteWide.size) {
+      problems.push(`${page.path}: ${siteWide.size - site.length} site CSS resource(s) missing`);
+    }
+    if (site.length > 0 && shared.length + own.length > 0 && Math.max(...site) > Math.min(...shared, ...own)) {
+      const name = (i) => (page.css[i].startsWith('inline:') ? `<style> (${page.css[i].length - 7} chars)` : page.css[i]);
+      problems.push(`${page.path}: tool CSS ${name(Math.min(...shared, ...own))} comes before site CSS ${name(Math.max(...site))}`);
+    }
     if (shared.length === 0) {
       problems.push(`${page.path}: no shared tool CSS found before the tool CSS`);
     } else if (Math.max(...shared) > Math.min(...own)) {
@@ -96,13 +112,55 @@ export function checkOrder(pages, siteWide) {
   return { checked, problems };
 }
 
+function walkHtml(dir, out = []) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) walkHtml(full, out);
+    else if (entry.name.endsWith('.html')) out.push(full);
+  }
+  return out;
+}
+
+function isToolPageFile(distDir, file) {
+  const rel = file.slice(distDir.length + 1).split('\\').join('/');
+  return /^(?:zh|ja|ko\/)?tools\//.test(rel);
+}
+
+// Site-wide CSS is what every non-tool page links (BaseLayout). Tool pages are excluded
+// because they add shared and per-tool CSS on top. Blog pages add ArticleLayout CSS, which
+// the intersection over all non-tool pages removes.
+export function siteWideResources(distDir) {
+  let set = null;
+  for (const file of walkHtml(distDir)) {
+    if (isToolPageFile(distDir, file)) continue;
+    const css = new Set(cssResources(readFileSync(file, 'utf8')).filter((r) => !r.startsWith('inline:')));
+    if (css.size === 0) continue;
+    set = set ? new Set([...set].filter((r) => css.has(r))) : css;
+  }
+  return set ?? new Set();
+}
+
 export function checkDist(distDir) {
-  const about = join(distDir, 'about', 'index.html');
-  if (!existsSync(about)) throw new Error(`${about} not found (run astro build first)`);
-  const siteWide = new Set(cssResources(readFileSync(about, 'utf8')));
+  const siteWide = siteWideResources(distDir);
+  if (siteWide.size === 0) throw new Error('no site-wide CSS found on non-tool pages');
   const pages = listToolPages(distDir).map((p) => ({ ...p, css: cssResources(readFileSync(p.file, 'utf8')) }));
   if (pages.length === 0) throw new Error(`no tool pages found in ${distDir}`);
-  return { pages: pages.length, ...checkOrder(pages, siteWide) };
+  const problems = [];
+  for (const r of siteWide) {
+    if (!/^\/_astro\/site\.[A-Za-z0-9_-]{8}\.css$/.test(r)) {
+      problems.push(`site CSS ${r} is not named site.<hash>.css; run scripts/rename-css-chunks.mjs`);
+    }
+  }
+  for (const page of pages) {
+    for (const r of page.css) {
+      if (r.startsWith('/_astro/_slug_')) {
+        problems.push(`${page.path}: CSS chunk ${r} still carries the first-parent name; run scripts/rename-css-chunks.mjs`);
+      }
+    }
+  }
+  const result = checkOrder(pages, siteWide);
+  const unique = [...new Set([...problems, ...result.problems])];
+  return { pages: pages.length, checked: result.checked, problems: unique };
 }
 
 const isDirectRun = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
@@ -120,5 +178,5 @@ if (isDirectRun) {
     for (const p of result.problems.slice(0, 20)) console.error(`  - ${p}`);
     process.exit(1);
   }
-  console.log(`check-tool-css-order: ${result.pages} tool pages, no inline <style> in <head>, ${result.checked} with own tool CSS, shared tool CSS first on all`);
+  console.log(`check-tool-css-order: ${result.pages} tool pages, no inline <style> in <head>, ${result.checked} with own tool CSS, site CSS first and shared tool CSS before own tool CSS on all`);
 }

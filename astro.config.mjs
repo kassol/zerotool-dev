@@ -70,10 +70,11 @@ function toolRoutes() {
         for (const [slug, file] of Object.entries(toolComponentFiles)) {
           const entry = join(outDir, `${slug}.astro`);
           fs.writeFileSync(entry, `---
-// Astro orders a page's CSS by import position. These two imports come first so
-// the shared tool CSS (layout, AdUnit, tool-common.css) is linked before the tool
-// CSS, as when all tool CSS was one file. scripts/check-tool-css-order.mjs checks
-// this after the build.
+// Astro orders a page's CSS by import position. Site-wide base styles come first,
+// then the shared tool CSS (layout, AdUnit, tool-common.css), then the tool CSS,
+// as when all tool CSS was one file. scripts/check-tool-css-order.mjs checks this
+// after the build.
+import '../../src/styles/site.css';
 import '../../src/layouts/ToolLayout.astro';
 import '../../src/styles/tool-common.css';
 import ToolPage from '../../src/components/ToolPage.astro';
