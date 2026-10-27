@@ -11,7 +11,7 @@
 | W1 结果可信 | 40 | 0 | 0 | AES 的 W1 按 v1.141.3 修复与回归改判为通过：输入 / 密钥 / 参数 / 文件 / 清空后旧任务不再写回，203 项页面回归与 32 个浏览器场景通过。其余 39 个维持 2026-10-24 的通过。 |
 | W2 边界说清楚 | 40 | 0 | 0 | 沿用 2026-10-24 证据。 |
 | W3 响应及时 | 0 | 0 | 40 | 本机三次 load average 为 19.89 / 22.42 / 17.11，均高于 10，没有合格采样窗口；Windows 远程大文件的浏览器文件选择授权仍等 Sir 批准，试跑 0/18。见 `2026-10-27-w3-local-load-gate.md`。 |
-| W4 交互顺手 | 3 | 0 | 37 | 40 个工具都完成了 ZeroTool 侧真实任务与 390 × 844 移动布局检查（横向溢出 0）；只有 text-to-binary、string-escape、number-base 同时具备完整的前三竞品点击对照与键盘路径。其余 37 个的竞品或键盘证据不全。见 `2026-10-27-w4-rest-batch-a.md`、`-batch-b.md`、`-mobile.md`。 |
+| W4 交互顺手 | 2 | 0 | 38 | 40 个工具都完成了 ZeroTool 侧真实任务与 390 × 844 移动布局检查（横向溢出 0）。前三竞品对照：5 个 3 / 3 完成、8 个 1–2 / 3、27 个未完成；4 个有键盘路径记录；同时满足两项的是 text-to-binary 与 url-parser。其余 38 个缺竞品或键盘证据。见 `2026-10-25-w4-interaction-comparison.md`、`2026-10-27-w4-rest-batch-a.md`、`-batch-b.md`、`-mobile.md`。 |
 | W5 看起来是一个整体 | 40 | 0 | 0 | 沿用 2026-10-24 的 640 组四语 × 两主题 × 两视口记录。 |
 | W6 说真话 | 40 | 0 | 0 | 覆盖率 40 / 40。八批共审查 4,503 条语言级陈述：supported 3,064、corrected 773、qualified 428、unverified 238；未核实项均在逐工具证据中标出，主要是带日期的竞品 / 浏览器观察与少数无法取得的一手来源。 |
 | W7 有一处做得比别人好 | 40 | 0 | 0 | 沿用 2026-10-24 证据。 |
@@ -38,10 +38,11 @@
 
 - ZeroTool 真实任务：40 / 40（含输入、输出或下载产物、页面点击、结果 `scrollY`）。
 - 移动视口 390 × 844：40 / 40，横向溢出 0。
-- 前三竞品完整对照（3 / 3 完成）：json-formatter、dns-lookup、svg-optimizer、text-to-binary、url-parser、glassmorphism-generator。
-- 部分完成（1–2 / 3）：markdown-table-generator、string-escape、number-base、image-to-base64、pkce-generator、color-shades-generator、wifi-qr-code-generator、htpasswd-generator、color-palette-generator。
-- 未完成竞品对照：其余 25 个工具。
-- 键盘路径：text-to-binary（10 次 Tab 从 h1 到文本框）、string-escape（12 次）、number-base（13 次）；其余未记录。
+- 前三竞品完整对照（3 / 3 完成，5 个）：json-formatter、dns-lookup、svg-optimizer、text-to-binary、url-parser。
+- 部分完成（1–2 / 3，8 个）：markdown-table-generator、string-escape、number-base、image-to-base64、pkce-generator、color-palette-generator、color-shades-generator、wifi-qr-code-generator。
+- 未完成竞品对照（27 个）：`ai-token-counter`（3 个竞品都未取得可信结果）与其余 26 个未做竞品对照的工具。
+- 键盘路径（4 个可只用 Tab 与键入完成主流程）：text-to-binary（10 次 Tab 从 h1 到文本框）、string-escape（12 次）、number-base（13 次）、url-parser（记录为可完成，未记 Tab 次数）；其余未记录。
+- 同时具备完整竞品对照与键盘证据的 2 个：text-to-binary、url-parser。
 
 ## 站点矩阵（S1–S5）
 
@@ -49,13 +50,13 @@
 |---|---|---|
 | S1 首页与目录 | 通过 | 韩文 `json 포맷` 别名召回修复（v1.141.3），143 项搜索回归；四语首页 / 目录 32 组、192 次查询通过。 |
 | S2 一致性 | 通过 | 内容 parity 7,753 项，141 个工具全部规则；640 组布局记录保持。 |
-| S3 速度 | 不通过 | 移动端实验室 LCP 5.2–5.5 s，CLS 0；CrUX 现场数据仍为 No Data，INP 无法判定。见 `2026-10-24-work-grade-reassessment.md`。 |
+| S3 速度 | 证据不足 | 移动端实验室 LCP 在 v1.141.3 部署后为 1.67–1.74 s（五页中位数，Google PSI，2026-10-24），CLS 0.00000–0.00129；v1.142.3 起的 `site.css` 提取与 CSS chunk 重命名没有复测。CrUX 现场数据仍为 No Data，INP 无法判定。测量记录在仓库外 `strategy/work-grade-fixes-2026-10-24/README.md`，口径见 `2026-10-24-work-grade-fixes.md`。 |
 | S4 可信页面 | 通过 | About / 隐私 / 条款 / 联系 / 语言样本 200；披露与敏感页控制有当前回归。 |
 | S5 没有明显缺陷 | 通过 | 845 个构建 HTML、1,033 个同源目标；404 页路径归一化兜底；本轮构建与浏览器检查未新增坏链或页面异常。 |
 
 ## 结论
 
 - W6 覆盖完成，W1 的 AES 改判完成；W5 / W7 / W2 沿用既有通过。
-- W3 仍为全部证据不足；W4 只有 3 个工具达到完整对照。
+- W3 仍为全部证据不足；W4 只有 text-to-binary 与 url-parser 同时满足竞品与键盘证据。S3 的实验室 LCP 已达标但自 v1.142.3 起未复测，INP 无现场数据。
 - 不能宣告作品级全项通过，也不提交 AdSense 重提；这两件事等 Sir 走查后决定。
 - 最终验证见 `2026-10-28-final-verification.md`。
