@@ -177,11 +177,11 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 
 12. **公开处理与隐私说明**：按实际实现说明输入在哪里处理、是否上传、存储与清除方式、联网目标及统计动作；不用「数据永不离开浏览器」「完全クライアントサイド」「완전 브라우저 처리」一类绝对承诺。复制、下载、外部图片加载等行为的说明须与代码一致，草稿博客不进入公开文字巡检。
 
-13. **提交与推送**：每个完成的改动批次直接 commit 并 push 到 `origin/master`，不等待额外确认；部署仍只在 tag 时发生，按第 8 条与「部署机制」执行。
+13. **提交、推送与发版**：每个完成的用户可见改动批次直接 commit 并 push 到 `origin/master`，随后按 SemVer 打 tag 发布（修正与内容核对为 patch，新功能为 minor），不等待额外确认。纯内部文档或证据提交可并入下一批。tag 前本地 build 必须通过；部署由 tag 触发，按第 8 条与「部署机制」执行。
 
 ## 变更日志
 
-- 2026-10-27 — 提交与推送约定改为每批直接 commit 并 push 到 `origin/master`，不再逐次等待确认（部署仍只在 tag 时发生）。同日完成 W6 第二批 `ssl-certificate-decoder`、`cookie-parser`、`bcrypt-generator`、`hmac-generator`、`json-schema-validator` 的四语核对，共 488 条陈述、102 条修正，并修复 SSL 的 PKCS #12 PEM 持久化缺口，范围与证据见 `docs/2026-10-27-w6-batch-2.md`。
+- 2026-10-27 — 提交、推送与发版约定：每个用户可见改动批次直接 commit 并 push 到 `origin/master`，随后按 SemVer 打 tag 发布（修正为 patch，新功能为 minor），不再逐次等待确认。同日完成 W6 第二批 `ssl-certificate-decoder`、`cookie-parser`、`bcrypt-generator`、`hmac-generator`、`json-schema-validator` 的四语核对，共 488 条陈述、102 条修正，并修复 SSL 的 PKCS #12 PEM 持久化缺口，范围与证据见 `docs/2026-10-27-w6-batch-2.md`。本批随 v1.142.1 发布。
 
 - 2026-10-24 — 完成 S2-10g / 10i / 10j 的实现集成，范围与验收见 `docs/2026-10-24-s2-closure.md`。盘点全部 141 个工具的事件名、动作与触发时机，保留 45 个历史别名；31 个工具修正自动输入、初始渲染或异步操作尚未成功就记使用的路径，相关四语隐私题同步。Regex / RSA 报错本地化、RSA 复制后备、HTTP Header 请求行与摘要、CSS 数字越界处理补齐。MDX 标注忽略代码内标题，增加 GFM 表格空行检查与普通零宽示例复算；共享读者仍可读取行内代码。公开文案检查扩充到四语数据位置承诺，FAQ 按真实 YAML 检查结构与数量，统一 About、组件、工具页、博客与 i18n 的处理和隐私说明。114 个受保护引擎区块保持逐字不变。日报采集修复与补档证据保留在仓库外的 metrics 目录。
 
