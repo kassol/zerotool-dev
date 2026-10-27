@@ -20,7 +20,7 @@
 ## 本轮产品改动
 
 1. **CSS 顺序与命名（backlog #29）**：全站样式移入 `src/styles/site.css`，工具页顺序固定为 site → 共享工具 → 本工具；`check-tool-css-order.mjs` 检查全站样式位置与命名；`rename-css-chunks.mjs` 在构建后按引用页面重命名 chunk；新增/更新测试 33 + 27 项。
-2. **W6 内容核对 40 / 40**：八批共 4,409 条陈述，supported 2,992、corrected 771、qualified 419、unverified 227。逐工具证据见 `docs/2026-10-27-w6-batch-{3..8}.md` 与 `docs/2026-10-25-w6-statements.json`（第 1 批）。
+2. **W6 内容核对 40 / 40**：八批共 4,503 条陈述，supported 3,064、corrected 773、qualified 428、unverified 238。逐工具证据见 `docs/2026-10-27-w6-batch-{3..8}.md` 与 `docs/2026-10-25-w6-statements.json`（第 1 批）。
 3. **htpasswd 文件检查**：第三字段存在且密码匹配时追加四语 Apache 无法登录说明，回归 1,578 项通过。
 4. **zero-width 工具卡描述**：去掉「emoji 不会被拆坏」的绝对说法。
 

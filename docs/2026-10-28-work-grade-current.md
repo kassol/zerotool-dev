@@ -13,7 +13,7 @@
 | W3 响应及时 | 0 | 0 | 40 | 本机三次 load average 为 19.89 / 22.42 / 17.11，均高于 10，没有合格采样窗口；Windows 远程大文件的浏览器文件选择授权仍等 Sir 批准，试跑 0/18。见 `2026-10-27-w3-local-load-gate.md`。 |
 | W4 交互顺手 | 3 | 0 | 37 | 40 个工具都完成了 ZeroTool 侧真实任务与 390 × 844 移动布局检查（横向溢出 0）；只有 text-to-binary、string-escape、number-base 同时具备完整的前三竞品点击对照与键盘路径。其余 37 个的竞品或键盘证据不全。见 `2026-10-27-w4-rest-batch-a.md`、`-batch-b.md`、`-mobile.md`。 |
 | W5 看起来是一个整体 | 40 | 0 | 0 | 沿用 2026-10-24 的 640 组四语 × 两主题 × 两视口记录。 |
-| W6 说真话 | 40 | 0 | 0 | 覆盖率 40 / 40。八批共审查 4,409 条语言级陈述：supported 2,992、corrected 771、qualified 419、unverified 227；未核实项均在逐工具证据中标出，主要是带日期的竞品 / 浏览器观察与少数无法取得的一手来源。 |
+| W6 说真话 | 40 | 0 | 0 | 覆盖率 40 / 40。八批共审查 4,503 条语言级陈述：supported 3,064、corrected 773、qualified 428、unverified 238；未核实项均在逐工具证据中标出，主要是带日期的竞品 / 浏览器观察与少数无法取得的一手来源。 |
 | W7 有一处做得比别人好 | 40 | 0 | 0 | 沿用 2026-10-24 证据。 |
 
 没有任何工具七项全过：W3 对全部 40 个仍为证据不足。
@@ -28,9 +28,9 @@
 | 4 | image-to-base64、pkce、ai-token、color-palette、color-shades | 569 | 426 | 66 | 46 | 31 |
 | 5 | eyedropper、wifi、color-blindness、har、qr-generator | 574 | 385 | 87 | 66 | 36 |
 | 6 | string-escape、htpasswd、number-base、clip-path、protobuf | 646 | 493 | 75 | 50 | 28 |
-| 7 | text-to-binary、url-parser、markdown-table、image-palette、svg-optimizer | 559 | 322 | 145 | 52 | 40 |
+| 7 | text-to-binary、url-parser、markdown-table、image-palette、svg-optimizer | 653 | 394 | 147 | 61 | 51 |
 | 8 | json-formatter、openapi、jq、sprite、glassmorphism | 531 | 337 | 97 | 72 | 25 |
-| **合计** | **40** | **4,409** | **2,992** | **771** | **419** | **227** |
+| **合计** | **40** | **4,503** | **3,064** | **773** | **428** | **238** |
 
 逐工具记录：`2026-10-25-w6-statements.json`（第 1 批）、`2026-10-27-w6-b{2..8}-{slug}.md` / `.json` 与对应批次汇总。
 
