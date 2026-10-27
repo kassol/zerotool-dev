@@ -10,7 +10,7 @@ steps:
 faqItems:
   - id: "privacy"
     question: "照会したドメイン名は ZeroTool に送られますか？"
-    answer: "ブラウザーはドメイン名とレコード種別を、選択した cloudflare-dns.com または dns.google に直接送ります。そのサービスには IP アドレスと照会内容が届きます。ZeroTool は照会を中継せず、ツールは照会したドメイン名をブラウザーのストレージに保存しません。「クリア」か Ctrl/⌘+L でドメイン名と結果を消去できます。このページは Google Analytics と AdSense を読み込みます。イベントはツール名と操作名だけで、現在の DNS 応答の表示後に lookup（DNS のエラー応答を含む）、現在の応答のコピー成功後に copy_json を記録します。通信失敗、コピー失敗、古い処理の完了では結果イベントを記録せず、照会内容と応答も含めません。"
+    answer: "ブラウザーはドメイン名とレコード種別を、選択した cloudflare-dns.com または dns.google に直接送ります。そのサービスには IP アドレスと照会内容が届きます。ZeroTool は照会を中継せず、ツールは照会したドメイン名をブラウザーのストレージに保存しません。「クリア」か Ctrl/⌘+L でドメイン名と結果を消去できます。このページは Google Analytics と AdSense を読み込みます。ツールイベントのカスタムパラメーターはツール名と操作名だけです。Google Analytics はページや端末などの通常のアクセス情報も収集します。現在の DNS 応答の表示後に lookup（DNS のエラー応答を含む）、現在の応答のコピー成功後に copy_json を記録します。通信失敗、コピー失敗、古い処理の完了では結果イベントを記録せず、照会内容と応答も含めません。"
   - id: "dnssec"
     question: "「DNSSEC なし」と表示されるのはなぜですか？"
     answer: "応答の AD フラグが立っていないためです。AD は応答中のすべてのレコードが DNSSEC で検証されたときだけ立ちます。ゾーンが署名されていない場合のほか、署名済みの名前から署名のないゾーンへ CNAME でつながる場合も立ちません。検証に失敗した場合は SERVFAIL が返ります。応答に DNSSEC 関連の拡張エラーコード（RFC 8914 の 1・2・5〜12）が付いていれば、ラベルは「DNSSEC 検証失敗」になり、レコード欄の下にリゾルバーの注記で理由が表示されます。それ以外の SERVFAIL ではラベルを出しません。リゾルバーが回答を返していないので、AD フラグからは署名の有無が分からないためです。"
@@ -19,7 +19,7 @@ faqItems:
     answer: "種類を選び、レコード名を省略せずに入力します。SPF・DMARC・DKIM は種類 TXT で、SPF はドメインそのもの、DMARC は _dmarc.ドメイン、DKIM は セレクター._domainkey.ドメイン を照会します。セレクターは受信したメールの DKIM-Signature ヘッダーの s= に書かれています。SRV は種類 SRV で _xmpp-server._tcp.jabber.org のような名前を照会します。アンダースコアを含む名前もそのまま照会できます。逆引きは IPv4 アドレスを逆順にして .in-addr.arpa を付け、種類に PTR を選びます。1.1.1.1 なら 1.1.1.1.in-addr.arpa と入力し、Cloudflare は one.one.one.one. を返します。IP アドレスから名前を自動で作る機能はありません。"
   - id: "different-results"
     question: "ローカルの dig や nslookup、もう一方のリゾルバーと結果が違うのはなぜですか？"
-    answer: "dig と nslookup はパソコンが使っている DNS サーバーに問い合わせます。社内 VPN の DNS、hosts ファイル、プロキシーアプリが返す値はそちらにだけ反映されます。本ツールは HTTPS で公開リゾルバーに直接問い合わせるので、インターネット側から見た結果になります。2 つのリゾルバーの間でも違いが出ます。Google は利用者の IP アドレスの一部（EDNS Client Subnet）を権威サーバーに伝え、Cloudflare は伝えないため、CDN のドメインでは別のアドレスが返ることがあります。また TXT レコードは 1 つの文字列が 255 バイトまでなので、長い DKIM の公開鍵は複数の文字列に分かれます。Cloudflare は文字列ごとに引用符で囲んで空白で区切り、Google は 1 つにつないで引用符なしで返しますが、どちらも同じレコードです。"
+    answer: "dig と nslookup は既定では端末に設定された DNS サーバーに問い合わせますが、別のサーバーも指定でき、通常 hosts ファイルは読みません。社内 VPN の DNS やポート 53 を横取りするプロキシーで結果が変わることがあります。本ツールは HTTPS で Cloudflare または Google に問い合わせるため、社内 DNS のレコードや hosts の上書きは確認できません。Google は利用者の IP アドレスの一部を権威サーバーに伝えることがあり（EDNS Client Subnet）、Cloudflare は通常、外部の権威サーバーへ ECS を転送しないため、CDN のアドレスも異なる場合があります。TXT の 1 文字列は 255 バイトまでなので、長い DKIM 鍵は分割されます。下記の日付付きの実測では、Cloudflare は各文字列を引用符と空白で区切り、Google は引用符なしでつないで返しました。"
   - id: "idn"
     question: "日本語ドメインは照会できますか？"
     answer: "できます。日本語.jp のように入力すると、ブラウザーの URL 処理で xn--wgv71a119e.jp のような Punycode に変換してから照会します。全角英数字や「。」も半角に直します。"
@@ -41,11 +41,11 @@ faqItems:
 
 ## 送信ドメイン認証（SPF・DMARC）の確認
 
-Gmail は 2024 年 2 月 1 日から、1 日 5,000 件を超えて送信する送信者に SPF・DKIM・DMARC の設定を求めています（[Google のメール送信者のガイドライン](https://support.google.com/a/answer/81126?hl=ja)）。設定したレコードが外から見えるかは、次の順に確認できます。
+Gmail は 2024 年 2 月から、個人用 Gmail アカウント宛てに 1 日約 5,000 件以上を送る一括送信者に SPF・DKIM・DMARC の設定を求めています（[Google のメール送信者のガイドライン](https://support.google.com/a/answer/81126?hl=ja)）。設定したレコードが外から見えるかは、次の順に確認できます。
 
 - `jprs.jp` の MX：`10 jprs.in.tmems-jp.trendmicro.com.`。数字が小さいほど優先されます。
 - `_dmarc.jprs.jp` の TXT：`v=DMARC1; p=none; adkim=r; aspf=r; rua=mailto:dmarc-rua@jprs.co.jp`。`p=none` は、認証に失敗したメールも通常どおり扱い、集計レポートだけを受け取る設定です（[RFC 7489 §6.3](https://www.rfc-editor.org/rfc/rfc7489#section-6.3)）。
-- DKIM の公開鍵は 1 つの文字列の上限 255 バイト（[RFC 1035 §3.3](https://www.rfc-editor.org/rfc/rfc1035#section-3.3)）を超えることが多く、複数の文字列に分けて保存されます。Cloudflare は文字列ごとに引用符で囲んで空白で区切り、Google は 1 つの文字列につなげて返します。どちらも同じレコードです。
+- DKIM の公開鍵は 1 つの文字列の上限 255 バイト（[RFC 1035 §3.3](https://www.rfc-editor.org/rfc/rfc1035#section-3.3)）を超えることが多く、複数の文字列に分けて保存されます。2026-09-30 の実測では、Cloudflare は各文字列を引用符と空白で区切り、Google はつなげて返しました。これは当日の観測で、API の保証ではありません。Google の JSON 文書には引用符付きで分割された TXT の例もあります。
 
 ## dig・nslookup・他の Web ツールとの違い
 

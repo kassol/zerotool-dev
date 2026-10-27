@@ -29,12 +29,12 @@ faqItems:
 
 ## 场景：阿里云虚拟 MFA 手动添加后验证码不对
 
-阿里云帮助中心的[RAM 用户自行绑定 MFA 设备](https://help.aliyun.com/zh/ram/user-guide/ram-users-bind-mfa-devices-by-themselves)写了两种添加方式：扫码添加，或者「手动添加」，即把绑定页面上的账号和密钥抄进阿里云 App 或 Google Authenticator。手动抄写时错一个字符，App 照样会显示 6 位数，但服务端永远不认。
+阿里云帮助中心的[RAM 用户自行绑定 MFA 设备](https://help.aliyun.com/zh/ram/user-guide/ram-users-bind-mfa-devices-by-themselves)写了两种添加方式：扫码添加，或者「手动添加」，即把绑定页面上的账号和密钥抄进阿里云 App 或 Google Authenticator。手动抄写时错一个字符，App 仍可能显示 6 位数，但通常无法与服务端匹配。
 
-这时把绑定页上的同一串密钥粘到本工具里：
+这时把绑定页上的同一串密钥粘到本工具里，先对齐算法、位数、周期与两台设备的时钟，再在同一个时间步内比较：
 
-- 和 App 在同一个 30 秒里显示的数字不同：说明 App 里那份密钥抄错了。工具会直接指出非法字符，例如密钥里出现 `1`、`0`、`8`、`9`（Base32 字母表里没有这四个数字，多半是把 I、O、B 看错了）。
-- 数字相同，控制台还是提示安全码错误：看时钟。阿里云的 [MFA 常见问题](https://help.aliyun.com/zh/ram/support/faq-about-mfa)列出的原因包括手机时间「延迟或超前」、绑定页打开太久导致「二维码（密钥）已过期」。前者本工具会提示（本机时钟与服务器相差超过约 3 秒时）；后者要刷新绑定页，拿到的是一串新密钥。
+- 数字仍不同：重新核对两边的密钥。工具会直接指出非法字符，例如密钥里出现 `1`、`0`、`8`、`9`（Base32 字母表里没有这四个数字，多半是把 I、O、B 看错了）。
+- 数字相同，控制台还是提示安全码错误：继续核对服务端设置和绑定是否有效。阿里云的 [MFA 常见问题](https://help.aliyun.com/zh/ram/support/faq-about-mfa)列出的原因包括手机时间「延迟或超前」、绑定页打开太久导致「二维码（密钥）已过期」。本工具只用本站 Date 响应头估算当前设备的时钟偏差，超出测量误差约 3 秒才提示，不能确认手机时钟或认证服务设置；绑定已过期时要刷新绑定页，重新获取密钥。
 
 ## 实测示例（RFC 测试向量）
 
@@ -69,7 +69,7 @@ otpauth://totp/%E6%B5%8B%E8%AF%95%E7%8E%AF%E5%A2%83:dev%40example.com?secret=GEZ
 
 - 只生成 TOTP。`otpauth://hotp/` 会被拒绝，没有计数器模式。
 - 位数只有 6 和 8（Key Uri Format 规定的取值）；周期是 1 到 86400 的整数秒，从 Unix 纪元起算（T0 = 0）。
-- Key Uri Format 文档写明 Google Authenticator 忽略 `algorithm` 与 `period`，Android 版还忽略 `digits`。改动这些参数时，二维码下方会出现提示。
+- Key Uri Format wiki 最后编辑于 2018-11-26，记载过 Google Authenticator 忽略 `algorithm` 与 `period`、Android 版还忽略 `digits` 的情况；这不是对当前 App 版本的兼容性实测。选择非默认参数时，本工具会提醒你扫码后核对导入设置并比较验证码。
 - 不能直接读二维码图片。先用[二维码解码器](/zh/tools/qr-code-decoder/)取出 `otpauth://` 文本，再粘贴到这里；要把其他文字做成二维码，用[二维码生成器](/zh/tools/qr-code-generator/)。
 - 什么都不保存，刷新即清空，这是有意的设计。
 - 时钟检查依赖服务器 `Date` 头，精度 1 秒，约 3 秒以内的偏差不提示；请求失败时不显示任何提示。

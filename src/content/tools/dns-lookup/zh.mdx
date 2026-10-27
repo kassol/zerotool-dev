@@ -10,7 +10,7 @@ steps:
 faqItems:
   - id: "privacy"
     question: "查询的域名会发给 ZeroTool 吗？"
-    answer: "浏览器把域名和记录类型直接发给所选的 cloudflare-dns.com 或 dns.google，该解析器会收到你的 IP 地址和查询内容。ZeroTool 不代理查询，工具不把查询过的域名写入浏览器存储。“清空”或 Ctrl/⌘+L 清空域名和结果。本页加载 Google Analytics 和 AdSense。事件只包含工具名和动作：当前 DNS 响应显示后记录 lookup（含 DNS 错误响应），当前响应复制成功后记录 copy_json。网络失败、复制失败和过期回调不记录结果事件；事件不含查询或响应内容。"
+    answer: "浏览器把域名和记录类型直接发给所选的 cloudflare-dns.com 或 dns.google，该解析器会收到你的 IP 地址和查询内容。ZeroTool 不代理查询，工具不把查询过的域名写入浏览器存储。“清空”或 Ctrl/⌘+L 清空域名和结果。本页加载 Google Analytics 和 AdSense。工具事件的自定义参数只包含工具名和动作；Google Analytics 另外收集页面、设备等常规访问数据。动作包括：当前 DNS 响应显示后记录 lookup（含 DNS 错误响应），当前响应复制成功后记录 copy_json。网络失败、复制失败和过期回调不记录结果事件；事件不含查询或响应内容。"
   - id: "dnssec"
     question: "DNSSEC ✓ 是什么意思？"
     answer: "表示解析器返回的 AD 标志为真，即回答里的每条记录都通过了 DNSSEC 签名验证。显示「未启用 DNSSEC」通常是域名没有签名，或者 CNAME 指向了没签名的域名。签名验证失败时解析器返回 SERVFAIL：如果响应带有 DNSSEC 类扩展错误码（RFC 8914 的 1、2、5–12），标签显示「DNSSEC 验证失败」，记录下方的解析器备注写明原因；其他 SERVFAIL 不显示 DNSSEC 标签，因为解析器没有给出回答，AD 标志说明不了是否签名。"
@@ -19,7 +19,7 @@ faqItems:
     answer: "输入完整的记录名并选择类型。SPF 是域名本身的 TXT 记录，DMARC 在 _dmarc.example.com（TXT），DKIM 在 选择器._domainkey.example.com（TXT），选择器名要从邮件头 DKIM-Signature 里的 s= 取；SRV 记录在 _xmpp-server._tcp.jabber.org 这类名称上。本页接受带下划线的名称。反向解析要把 IPv4 地址倒过来写，再加上 .in-addr.arpa，类型选 PTR：1.1.1.1 就输入 1.1.1.1.in-addr.arpa，Cloudflare 返回 one.one.one.one.。工具不会根据 IP 地址自动生成这个名称。"
   - id: "different-results"
     question: "为什么和本机 dig、nslookup 或另一个解析器的结果不一样？"
-    answer: "dig 和 nslookup 问的是本机正在用的 DNS。开着代理软件的 fake-ip 模式时，53 端口由代理软件自己回答，返回 198.18 开头的假地址。本页用 HTTPS 直接问公共解析器，看到的是公网上的真实结果。公司内网、hosts 文件里的记录，本页也查不到。两个解析器之间也可能不同：Google 会把你 IP 地址的一部分（EDNS Client Subnet）转给权威服务器，Cloudflare 不会，所以 CDN 域名可能返回不同的地址。TXT 记录每段最多 255 字节，长的 DKIM 公钥会拆成多段：Cloudflare 按段加引号、用空格分隔，Google 拼成一整段、不加引号，两者是同一条记录。"
+    answer: "dig 和 nslookup 默认向本机配置的 DNS 服务器查询，也可以指定其他服务器；通常不读取 hosts 文件。公司 VPN 的 DNS 或拦截 53 端口的代理可能改变它们的结果。本页用 HTTPS 向 Cloudflare 或 Google 查询，查不到内网 DNS 记录或 hosts 文件的覆盖值。两个解析器之间也可能不同：Google 可能把你 IP 地址的一部分（EDNS Client Subnet）转给权威服务器，Cloudflare 通常不向外部权威服务器发送 ECS，所以 CDN 域名可能返回不同的地址。TXT 记录每段最多 255 字节，长的 DKIM 公钥会拆成多段；下文注明日期的实测中，Cloudflare 按段加引号、用空格分隔，Google 拼成一整段、不加引号。"
   - id: "idn"
     question: "中文域名能查吗？"
     answer: "能。直接输入即可，例如 测试.中国，浏览器的 URL 解析会先把它转成 Punycode（xn--0zwm56d.xn--fiqs8s）再查询。全角字母、数字和句号「。」也会转成半角。"
@@ -33,7 +33,7 @@ faqItems:
 
 以下结果在 2026-09-29 与 2026-09-30 查询，重查时 TTL 会不同。
 
-**同一个域名，查询来源不同，IP 就不同。** Google 会把查询者 IP 的一部分（[EDNS Client Subnet](https://developers.google.com/speed/public-dns/docs/ecs)）发给权威服务器，Cloudflare [不发](https://developers.cloudflare.com/1.1.1.1/faq/)，CDN 据此按位置返回不同节点。Google 的 [JSON 接口](https://developers.google.com/speed/public-dns/docs/doh/json) 可以用 `edns_client_subnet` 参数自己指定这个子网（本页不发送该参数）。2026-09-30 用它查 `www.qq.com` 的 A 记录：`114.114.114.0/24` 得到 `121.14.77.201`、`121.14.77.221`，`8.8.8.0/24` 得到 `43.159.109.55`，`139.130.4.0/24` 得到 `43.168.224.173`。给 Cloudflare 带上同样的参数，它不理会，返回 `43.159.109.55`。复现命令：
+**同一个域名，查询来源不同，IP 就不同。** Google 可能把查询者 IP 的一部分（[EDNS Client Subnet](https://developers.google.com/speed/public-dns/docs/ecs)）发给权威服务器，Cloudflare [通常不向外部权威服务器发送 ECS](https://developers.cloudflare.com/1.1.1.1/faq/)，CDN 据此按位置返回不同节点。Google 的 [JSON 接口](https://developers.google.com/speed/public-dns/docs/doh/json) 可以用 `edns_client_subnet` 参数自己指定这个子网（本页不发送该参数）。2026-09-30 用它查 `www.qq.com` 的 A 记录：`114.114.114.0/24` 得到 `121.14.77.201`、`121.14.77.221`，`8.8.8.0/24` 得到 `43.159.109.55`，`139.130.4.0/24` 得到 `43.168.224.173`。给 Cloudflare 带上同样的参数，它不理会，返回 `43.159.109.55`。复现命令：
 
 ```bash
 curl -s 'https://dns.google/resolve?name=www.qq.com&type=A&edns_client_subnet=114.114.114.0/24'
@@ -49,7 +49,7 @@ curl -s 'https://dns.google/resolve?name=www.qq.com&type=A&edns_client_subnet=11
 
 在一台开着代理软件 fake-ip 模式的测试机上，`dig @1.1.1.1 dnssec-failed.org` 返回 NOERROR 和 `198.18.2.147`。198.18.0.0/15 是保留给性能测试的地址段（[RFC 6890](https://www.rfc-editor.org/rfc/rfc6890#section-2.2.2)），mihomo（Clash Meta）的 [默认 fake-ip 范围](https://wiki.metacubex.one/config/dns/) 就在这段里。也就是说，即使写了 `@1.1.1.1`，发往 53 端口的查询也被代理软件截下并编了一个地址。本页走 HTTPS，拿到的是真实的 SERVFAIL。
 
-排查「本机打不开，但别人能打开」时，先在本页查一次，再和本机 dig 的结果对照：两边不同，问题多半在本机的代理、hosts 或运营商 DNS。
+排查「本机打不开，但别人能打开」时，可以对照本页和本机 dig 的结果，再检查所用解析器、代理、缓存与 CDN 分流。dig 通常不读取 hosts 文件；hosts 覆盖应另用应用或系统的名称解析结果核对，不能只凭两次 DNS 查询不同就归因于 hosts。
 
 ## 与 dig、nslookup 和其他在线查询站的区别
 
