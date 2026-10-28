@@ -50,8 +50,15 @@
 
 ## 2026-10-28 补充二（W4 批次 D–F，40 个工具全覆盖）
 
-- W4：40 个工具全部重测同一任务（ZeroTool 鼠标 + 键盘 + 本会话 Bing 前三）。W4 通过从 7 增到 30：30 个具备 3 / 3 竞品、键盘与主流程；4 个有外部阻塞记录（openapi-validator 的同意层，totp-generator / wifi-qr-code-generator / qr-code-generator 的无表单或登录墙）；6 个仍有缺口（aes-encrypt-decrypt、protobuf-to-json、jq-playground、color-palette-generator、image-color-palette、eyedropper-color-picker）。证据见 `2026-10-28-w4-batch-c.md`、`-d.md`、`-e.md`、`-f.md` 与对应 JSON。
-- 键盘：到达主输入框 40 / 40；只用键盘完成主流程 38 / 40（eyedropper 的像素取样、protobuf 的文件选择）。
+- W4：40 个工具全部重测同一任务（ZeroTool 鼠标 + 键盘 + 本会话 Bing 前三）。W4 通过从 7 增到 30（批次 G 后为 36，见补充三）：30 个具备 3 / 3 竞品、键盘与主流程；4 个有外部阻塞记录（openapi-validator 的同意层，totp-generator / wifi-qr-code-generator / qr-code-generator 的无表单或登录墙）；6 个仍有缺口（aes-encrypt-decrypt、protobuf-to-json、jq-playground、color-palette-generator、image-color-palette、eyedropper-color-picker）。证据见 `2026-10-28-w4-batch-c.md`、`-d.md`、`-e.md`、`-f.md` 与对应 JSON。
+- 键盘：到达主输入框 40 / 40；只用键盘完成主流程 38 / 40（批次 G 后为 39 / 40：protobuf 可完成，eyedropper 仍只能用指针）。
 - W3：本轮 load 11.45 / 10.50 / 10.32（22:03Z）与收尾 66.05 / 101.41 / 118.68（构建测试期间），没有同时低于 10 的窗口，30 个工具未补跑。Windows 远程大文件的文件选择授权仍等 Sir。
 - 验证：`node scripts/audit.mjs` 24 PASS / 0 FAIL；`npm run build` 通过（845 个 HTML、564 个工具页 CSS 顺序检查通过）；170 个 `test-*.mjs` 中 169 个退出 0，`test-csv-json.mjs` 在批量运行中一次异常退出、单独重跑 990 / 990 通过（本轮无代码改动）。
 - 本轮无用户可见交互改动，未打 tag，未提交 AdSense 重提，未宣告作品级全项通过。
+
+## 2026-10-28 补充三（W4 批次 G：备选站补齐 10 个工具）
+
+- 口径：Sir 批准的备选站规则——前三名无法完成同一任务时，按同一次 Bing 结果顺延取下一个可用站点，记录原排名、替换站与原因；不使用需要账号、付费或安装扩展的站点。
+- 结果：10 个工具里 6 个通过（`aes-encrypt-decrypt`、`jq-playground`、`image-color-palette`、`openapi-validator`、`totp-generator`、`wifi-qr-code-generator`）；4 个待 Sir 决定（`eyedropper-color-picker` 的键盘光标、`protobuf-to-json` 1 / 6、`color-palette-generator` 2 / 10、`qr-code-generator` 2 / 10）。W4 通过从 30 增至 36，纯键盘完成 39 / 40，竞品 3 格及以上 37 / 40。
+- 外部阻塞清零：批次 E 的 4 个都按规则处理或纠正（totp.app 在 Add 之后有密钥字段）。
+- 证据：`2026-10-28-w4-batch-g.md` / `.json`；矩阵见 `2026-10-28-work-grade-current.md` / `.json`。
