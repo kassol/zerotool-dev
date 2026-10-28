@@ -678,6 +678,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const workspace = template.indexOf('class="htpw-workspace"');
   check('credentials, format and main action precede results', ['htpw-user', 'htpw-pass', 'htpw-format', 'htpw-generate', 'htpw-status'].every(id => template.indexOf('id="' + id + '"') < workspace));
   check('secondary hash settings, batch and file sections start collapsed', [...template.matchAll(/<details\b[^>]*>/g)].length === 3 && !/<details\b[^>]*\sopen(?:\s|>)/.test(template));
+  check('closed details bodies are not laid out (author flex rules do not override the UA rule)', /\.htpw-options:not\(\[open\]\) > \.htpw-options-body,\s*\.htpw-section:not\(\[open\]\) > \.htpw-section-body\s*\{\s*display:\s*none;\s*\}/.test(css));
   check('workspace has zero flex basis and scrolls within its height', /\.htpw-workspace\s*\{[^}]*flex:\s*1 1 0[^}]*min-height:\s*0[^}]*overflow:\s*auto/.test(css));
   check('long file/batch textareas keep bounded height and scroll', /#htpw-batch, #htpw-batch-result, #htpw-file\s*\{[^}]*height:\s*10rem[^}]*max-height:\s*10rem[^}]*resize:\s*none[^}]*overflow:\s*auto/.test(css));
   check('file table is bounded and keyboard scrollable', /\.htpw-table-wrap\s*\{[^}]*max-height:\s*16rem[^}]*overflow:\s*auto/.test(css) && /id="htpw-file-table"[^>]*tabindex="0"[^>]*role="region"[^>]*aria-label=/.test(template));

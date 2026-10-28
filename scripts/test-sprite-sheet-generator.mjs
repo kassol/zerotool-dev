@@ -945,6 +945,7 @@ for (const mode of ['clear', 'ctrl', 'meta']) {
   check('v2: shared 270–320px rail', /class="ssg-rail zt-rail"/.test(markup) && /grid-template-columns:\s*clamp\(270px, 26vw, 320px\) minmax\(0, 1fr\)/.test(styles));
   check('v2: controls and export precede preview', ['ssg-drop', 'ssg-dl-img', 'ssg-data', 'ssg-list', 'ssg-name'].every(id => markup.indexOf('id="' + id + '"') < markup.indexOf('id="ssg-canvas"')));
   check('v2: data focus follows parameter controls', markup.indexOf('id="ssg-data"') > markup.indexOf('id="ssg-gifframes"'));
+  check('v2: export follows the image-format option in the source, order keeps it on screen above the list', markup.indexOf('class="ssg-export"') > markup.indexOf('id="ssg-gifframes"') && /\.ssg-export \{ order: 2; \}/.test(styles) && /\.ssg-options-panel \{ order: 4; \}/.test(styles));
   check('v2: segmented radio semantics retained', /class="ssg-seg zt-segmented"/.test(markup) && (markup.match(/type="radio" name="ssg-layout"/g) || []).length === 2);
   check('v2: exports follow existing output hidden state', /\.ssg-wrap:has\(#ssg-output\[hidden\]\) \.ssg-export,\s*\.ssg-wrap:has\(#ssg-output\[hidden\]\) \.ssg-data-panel\s*\{\s*display:\s*none/.test(styles));
   check('v2: empty explanation follows output visibility', /class="ssg-empty">\{emptyPreview\}/.test(markup) && /\.ssg-wrap:has\(#ssg-output:not\(\[hidden\]\)\) \.ssg-empty\s*\{\s*display:\s*none/.test(styles));

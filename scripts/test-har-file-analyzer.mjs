@@ -994,6 +994,7 @@ const PAGE_EXAMPLES = {
       page = runPage(lang);
       const [okText, okTone] = await page.open('ok.har', sample);
       check(lang + ': the trap file opens normally', okTone !== 'error', okText);
+      check(lang + ': overview names the literal 4xx/5xx codes without opening a request', /\(404, 500\)/.test(page.get('har-findings').innerHTML), page.get('har-findings').innerHTML);
       page.fail.stringify = true;
       page.get('har-export').click();
       const [exText] = await page.status();

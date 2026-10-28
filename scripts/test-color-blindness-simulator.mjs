@@ -772,6 +772,7 @@ console.log(`Page lifecycle: ${passes-lifecycleStart.passes} passed, ${failures-
     check(selector + ' honors hidden mode', rules(selector + '[hidden]').some(r => property(r, 'display', 'none')));
   }
   check('860px stacks results and 640px adjusts phone controls', /@media\s*\(max-width:\s*860px\)/.test(css) && /@media\s*\(max-width:\s*640px\)/.test(css));
+  check('desktop preview fits the first card above the 900px fold', /@media\s*\(min-width:\s*861px\)\s*\{\s*\.cbs-card-canvas\s*\{[^}]*max-height:\s*clamp\(220px, calc\(100svh - 545px\), 420px\);[^}]*object-fit:\s*contain;[^}]*\}/.test(css));
   check('phone comparison stacks original and simulation', /@media\s*\(max-width:\s*640px\)[\s\S]*?\.cbs-compare\s*\{[^}]*grid-template-columns:\s*1fr/.test(css));
   check('status reserves height even when empty', rules('.cbs-status').some(r => property(r, 'height', '[1-9][\\d.]*(?:em|rem|px)') && property(r, 'flex', 'none') && property(r, 'overflow', 'auto')) && !/\.cbs-status:empty/.test(css));
   check('color input stays short independently of its contents', rules('.cbs-colors').some(r => property(r, 'height', '[1-9][\\d.]*(?:rem|px)') && property(r, 'resize', 'none')));

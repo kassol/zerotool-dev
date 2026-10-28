@@ -836,12 +836,13 @@ function makePage(lang='en', layoutFirst=false) {
   check('tab container uses shared segmented styles without duplicating them',/<div class="bcg-tabs zt-segmented" role="tablist">/.test(template)&&rules('.bcg-tabs').every(r=>!/display:|border-radius:|box-shadow:/.test(r)));
   check('compact root is a natural-height shrinkable column',rules('.bcg-wrap').some(r=>prop(r,'display','flex')&&prop(r,'flex-direction','column')&&prop(r,'min-height','0')&&prop(r,'min-width','0'))&&!/\b(?:height|min-height):[^;]*(?:vh|svh)/.test(css));
   for(const mode of ['gen','ver']){
-    check(mode+' main operation precedes reserved status and input',template.indexOf('id="bcg-'+mode+'-btn"')<template.indexOf('id="bcg-'+mode+'-status"')&&template.indexOf('id="bcg-'+mode+'-status"')<template.indexOf('id="bcg-'+mode+'-pw"'));
+    check(mode+' status and input precede the action in the source (Tab order)',template.indexOf('id="bcg-'+mode+'-status"')<template.indexOf('id="bcg-'+mode+'-pw"')&&template.indexOf('id="bcg-'+mode+'-pw"')<template.indexOf('id="bcg-'+mode+'-btn"'));
+    check(mode+' action is ordered above the input visually',css.includes('#bcg-'+mode+' > .bcg-actions'));
     check(mode+' status remains keyboard reachable',new RegExp('id="bcg-'+mode+'-status"[^>]*tabindex="0"').test(template));
   }
   check('status keeps two lines, three on phone, and scrolls',rules('.bcg-wrap .tool-status').some(r=>prop(r,'height','3em')&&prop(r,'overflow','auto'))&&rules('.bcg-wrap .tool-status').some(r=>prop(r,'height','4.5em'))&&!/tool-status:empty[^}]*display:\s*none/.test(css));
   check('prefix/cost share a shrinking grid',rules('.bcg-opts').some(r=>prop(r,'display','grid')&&prop(r,'grid-template-columns','minmax\\(0, 1fr\\) 7rem')));
-  check('Generate options precede action and input',template.indexOf('id="bcg-prefix"')<template.indexOf('id="bcg-gen-btn"'));
+  check('Generate options precede the action, and the action follows the password in the source',template.indexOf('id="bcg-prefix"')<template.indexOf('id="bcg-gen-btn"')&&template.indexOf('id="bcg-gen-pw"')<template.indexOf('id="bcg-gen-btn"'));
   check('Check parsing cannot push input or primary operation down',template.indexOf('id="bcg-ver-parse"')>template.indexOf('id="bcg-ver-pw"')&&template.indexOf('id="bcg-ver-parse"')>template.indexOf('id="bcg-ver-btn"'));
   for(const [id,selector,height] of [['gen-out','.bcg-out','12rem'],['ver-parse','.bcg-parse','12rem'],['ver-result','.bcg-result','6rem'],['ver-variants','.bcg-variants','12rem']]){
     check(id+' has fixed height and internal scrolling',rules(selector).some(r=>prop(r,'height',height)&&prop(r,'overflow','auto')));

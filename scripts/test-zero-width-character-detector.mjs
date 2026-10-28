@@ -356,6 +356,7 @@ function pageHarness(lang = 'en', extraGlobals = {}) {
   check('no detection button is introduced for live input', !markup.includes('btn-primary'));
   check('hidden result is not overridden by flex', /\.zwcd-wrap \[hidden\] \{ display: none !important; \}/.test(style));
   check('long results have a bounded scroll container', /\.zwcd-result-scroll \{[^}]*flex: 1 1 0;[^}]*min-height: 0;[^}]*overflow: auto;/.test(style));
+  check('desktop preview leaves room for the cleaned text at 1366 × 900', /@media \(min-width: 861px\) \{\s*\.zwcd-viz-wrap \{ max-height: clamp\(160px, calc\(100svh - 686px\), 280px\); \}\s*\.zwcd-grid \{ max-height: clamp\(160px, calc\(100svh - 702px\), 280px\); overflow: auto; \}/.test(style));
   check('status has reserved space before input', markup.indexOf('id="zwcd-summary"') < markup.indexOf('id="zwcd-input"') && style.includes('min-height: 24px') && style.includes('min-height: 48px'));
   check('tablet stacking starts at 860px', style.includes('@media (max-width: 860px)'));
   check('tip buttons are outside labels', !/<label[^>]*>(?:(?!<\/label>)[\s\S])*<Toggletip/.test(markup));

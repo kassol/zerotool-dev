@@ -482,7 +482,7 @@ if (need('encryptFile') && need('decryptFile')) {
 {
   const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
   const script = source.slice(source.indexOf('<script'), source.indexOf('</script>'));
-  check('the tool root is .aes-wrap, a flex column that can shrink', /^\s*<div class="aes-wrap">/.test(markup) && /\.aes-wrap \{[^}]*flex-direction: column;[^}]*min-height: 0;/.test(source));
+  check('the tool root is .aes-wrap, a grid that can shrink', /^\s*<div class="aes-wrap">/.test(markup) && /\.aes-wrap \{[^}]*display: grid;[^}]*min-height: 0;/.test(source));
   check('plaintext and ciphertext use the shared two-pane classes', (markup.match(/class="aes-io zt-io"/g) || []).length === 1 &&
     (markup.match(/class="aes-pane zt-io-pane"/g) || []).length === 2 &&
     (markup.match(/<textarea [^>]*class="tool-textarea aes-textarea zt-io-fill"/g) || []).length === 2);
@@ -492,15 +492,19 @@ if (need('encryptFile') && need('decryptFile')) {
     /\.aes-box \{[^}]*display: flex;[^}]*flex: 1 1 auto;[^}]*min-height: 0;/.test(source));
   check('each box is still the drop target of its text box', (markup.match(/<div class="aes-box">\s*<textarea /g) || []).length === 2 && script.includes('var box = slot.area.parentElement;'));
   const bar = markup.slice(markup.indexOf('class="aes-keybar"'), markup.indexOf('class="aes-feedback"'));
-  check('key type, key, IV, AAD and both actions share the key bar', ['id="aes-advanced"', 'id="aes-iv"', 'id="aes-aad"', 'id="aes-mode"', 'id="aes-password"', 'id="aes-rawkey"', 'id="aes-toggle-pw"', 'id="aes-keyfmt"', 'id="aes-genkey"', 'id="aes-encrypt"', 'id="aes-decrypt"'].every((x) => bar.includes(x)));
+  check('key type, key, IV and AAD share the key bar', ['id="aes-advanced"', 'id="aes-iv"', 'id="aes-aad"', 'id="aes-mode"', 'id="aes-password"', 'id="aes-rawkey"', 'id="aes-toggle-pw"', 'id="aes-keyfmt"', 'id="aes-genkey"'].every((x) => bar.includes(x)) &&
+    bar.indexOf('id="aes-genkey"') < bar.indexOf('id="aes-advanced"') &&
+    !bar.includes('id="aes-encrypt"') && !bar.includes('id="aes-decrypt"'));
   // ToolLayout's Ctrl/Cmd+Enter clicks the first .btn-primary of the widget.
   eq('Encrypt is the first primary button, Decrypt the second', (markup.match(/<button id="([\w-]+)" class="btn-primary/g) || []).map((m) => m.slice(12, m.indexOf('"', 12))), ['aes-encrypt', 'aes-decrypt']);
   check('Ctrl/Cmd+Enter in the ciphertext box still decrypts', /cipherEl\.addEventListener\('keydown', function \(e\) \{\s*if \(\(e\.metaKey \|\| e\.ctrlKey\) && e\.key === 'Enter'\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); run\('decrypt'\); \}/.test(script));
-  // The user fills in every parameter, then presses a button: IV and AAD come before Encrypt and Decrypt in the
-  // source. Side by side they are pushed to the second row (order: 1); stacked they keep the source order.
-  check('IV and AAD come before Encrypt and Decrypt (source order; second row only when side by side)',
-    bar.indexOf('id="aes-genkey"') < bar.indexOf('id="aes-advanced"') && bar.indexOf('id="aes-aad"') < bar.indexOf('id="aes-encrypt"') &&
-    /\n  \.aes-advanced \{ order: 1; flex: 1 1 100%; display: grid;/.test(source) && /@media \(max-width: 860px\) \{\s*\.aes-advanced \{ order: 0; \}/.test(source));
+  // The user fills the key, plaintext and ciphertext, then presses a button: the actions follow the editors in the
+  // source so Tab reaches them after the inputs. The grid puts the buttons back beside the key.
+  check('Encrypt and Decrypt follow the editors in the source but sit beside the key (grid areas)',
+    markup.indexOf('class="aes-actions"') > markup.indexOf('aes-io zt-io') &&
+    /grid-template-areas: "keybar actions" "feedback feedback" "io io" "note note"/.test(source) &&
+    /\.aes-keybar \{ grid-area: keybar;/.test(source) && /\.aes-actions \{ grid-area: actions;/.test(source) &&
+    /@media \(max-width: 860px\) \{\s*\.aes-wrap \{[^}]*grid-template-areas: "keybar" "actions" "feedback" "io" "note"/.test(source));
   // `.tool-widget input[type="password"] { max-width: 100% }` (tool-common.css) has specificity 0,2,1; one class would lose.
   check('the key box is at most 44rem wide (the rule outranks the shared max-width)', source.includes('.aes-keybar .aes-key-input { max-width: 44rem; }') &&
     /\.tool-widget input\[type="password"\],[\s\S]{0,400}max-width: 100%;/.test(readFileSync(join(root, 'src/styles/tool-common.css'), 'utf8')));
