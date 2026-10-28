@@ -116,6 +116,10 @@ W4 判定不变：40 个工具里仍是 30 个通过、4 个外部阻塞、6 个
 
 低负载窗口：从 08:50 到 09:16 每 30 秒检查一次 load 1 分钟，最低约 36.9（全量测试结束后），从未低于 9.5；同机 `node`、Nowledge Mem、Xcode、magpie 等进程持续占用 CPU。没有合格样本，四语文案与数字保持原样，只记录。高负载下实际耗时远大于外推值，与 bcryptjs 异步 hash 每约 100 ms 让出后用 `setTimeout` 续跑、机器繁忙时回调被推迟一致；这不构成改数字的依据。
 
+## 生产站复核（v1.142.7 部署后）
+
+在 `https://zerotool.dev` 用同一组输入复测：HAR 概览 findings 为 `1 request returned 4xx or 5xx (404)` 且页面文本含 `404`；htpasswd 关闭的批量区 body 计算 `display: none`、`#htpw-batch-run` rect 全 0；color-blindness 首张卡片 441.09–876.47，画布 `max-height` 355px；zero-width 清理框 777.95–897.95，栅格高 198；AES 从页面顶部 Tab 到 plaintext 12、到 Encrypt 17。部署后的页面与本地构建一致。
+
 ## 验证
 
 - 定向测试：`test-aes-encrypt-decrypt` 532、`test-bcrypt-generator` 1713、`test-sprite-sheet-generator` 1498、`test-htpasswd-generator` 1579（1 SKIP，本机 htpasswd 无 SHA-2 crypt）、`test-har-file-analyzer` 2191、`test-color-blindness-simulator` 1127、`test-zero-width-character-detector` 1375，全部 0 失败。
