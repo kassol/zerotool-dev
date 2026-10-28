@@ -181,6 +181,8 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 
 ## 变更日志
 
+- 2026-10-28 — eyedropper 键盘取样复测：画布本身已有 `tabindex="0"`、方向键 1 px / Shift 10 px 与 Enter / Space 取色，批次 G 记的「只能用指针」不成立；用 2 × 2 PNG 在生产页实测，键盘可完成取样。W4 通过 36 → 37，余 3 个外部限制（protobuf 1 / 6、color-palette 2 / 10、qr-code-generator 2 / 10 且只认 PNG）。bcrypt 成本估算四语文案改为「空闲浏览器约需 {time}，繁忙设备更慢」，数字未改。证据见 `docs/2026-10-28-w4-eyedropper-keyboard.md`。随 v1.142.8 发布。
+
 - 2026-10-28 — Sir 决定收回 KDA-WIN-KASSOL 上的 W3 远程试跑：不再等待浏览器文件选择授权，不再续测，0 / 18 只作历史；W3 只保留本机负载门（采样前、中、后一分钟 load average 均低于 10）。同日确认继续等本机低负载窗口，不改门槛、不换机器。记录见 `docs/2026-10-28-w3-windows-withdrawal.md`。
 
 - 2026-10-28 — W4 批次 G（备选站规则，只改文档）：按 Sir 批准的规则把最后 10 个工具补齐——前三名无法完成同一任务时按同一次 Bing 结果顺延取下一个可用站点，记录原排名、替换站与原因。6 个通过：aes-encrypt-decrypt（#1–#3 分别拒绝 12 字节密钥或要求单独 IV，顺延到 monocalc / go-tools / aesencryption.net）、jq-playground（jsonwiz 的 jq-wasm 模块加载失败，顺延到 learnjq；play.jqlang.org 的输出是可读文本，批次 E 的「画布」不成立）、image-color-palette（Coolors 的文件输入不接受 PNG，colorkit / colorfetcher / compositepaint 三格）、openapi-validator（editor.swagger.io 的 Cookie 层未接受，顺延到 OpenFormatter）、totp-generator（totp.app 在 Add 之后有密钥字段，批次 E 的「无表单」不成立，三格都完成）、wifi-qr-code-generator（qr-code-generator.com 无表单、qrgenerator.org 不出预览，顺延到 TEC-IT / qifi）。4 个待 Sir 决定：eyedropper-color-picker（竞品 4 格，但图片像素取样只能用指针；是否加键盘光标单列）、protobuf-to-json（该次结果 6 个工具里只有 protobufpal 能加载 .proto 选消息并解码）、color-palette-generator（10 个里 2 个能从指定基色生成配色）、qr-code-generator（10 个里 2 个能不注册交付 PNG，#3 #10 只给 SVG；是否接受 SVG 待定）。矩阵：W4 通过 30 → 36，纯键盘完成 38 → 39（protobuf 现可完成，84 次 Tab），竞品 3 格及以上 37、1–2 格 3、0 格 0；外部阻塞 4 → 0。证据 `docs/2026-10-28-w4-batch-g.md` / `.json`，矩阵 `docs/2026-10-28-work-grade-current.md` / `.json`。未改代码、未打 tag。
