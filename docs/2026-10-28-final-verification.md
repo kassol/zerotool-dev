@@ -47,3 +47,11 @@
 - W4：38 个工具重测键盘路径与主流程，新增 5 个同时具备 3 / 3 竞品对照与键盘证据的工具（json-formatter、number-base、string-escape、text-to-ascii-art、pkce-generator），W4 通过 7 / 40。`dns-lookup` 因前批把访客 IP 当成 A 记录，降为部分完成；`svg-optimizer` 竞品 3 / 3 但无键盘记录。证据见 `2026-10-28-w4-batch-c.md`。
 - W3：采样窗口 load average 11.40 / 11.47 / 10.09，10 个样本全部排除、30 个工具未跑；四个大文件 fixture 不在归档中。W3 仍为 40 个证据不足。见 `2026-10-28-w3-retest.md`。
 - audit 24 PASS、build 通过、170 个 `test-*.mjs` 全部退出 0。本轮无用户可见交互改动，未打 tag。
+
+## 2026-10-28 补充二（W4 批次 D–F，40 个工具全覆盖）
+
+- W4：40 个工具全部重测同一任务（ZeroTool 鼠标 + 键盘 + 本会话 Bing 前三）。W4 通过从 7 增到 30：30 个具备 3 / 3 竞品、键盘与主流程；4 个有外部阻塞记录（openapi-validator 的同意层，totp-generator / wifi-qr-code-generator / qr-code-generator 的无表单或登录墙）；6 个仍有缺口（aes-encrypt-decrypt、protobuf-to-json、jq-playground、color-palette-generator、image-color-palette、eyedropper-color-picker）。证据见 `2026-10-28-w4-batch-c.md`、`-d.md`、`-e.md`、`-f.md` 与对应 JSON。
+- 键盘：到达主输入框 40 / 40；只用键盘完成主流程 38 / 40（eyedropper 的像素取样、protobuf 的文件选择）。
+- W3：本轮 load 11.45 / 10.50 / 10.32（22:03Z）与收尾 66.05 / 101.41 / 118.68（构建测试期间），没有同时低于 10 的窗口，30 个工具未补跑。Windows 远程大文件的文件选择授权仍等 Sir。
+- 验证：`node scripts/audit.mjs` 24 PASS / 0 FAIL；`npm run build` 通过（845 个 HTML、564 个工具页 CSS 顺序检查通过）；170 个 `test-*.mjs` 中 169 个退出 0，`test-csv-json.mjs` 在批量运行中一次异常退出、单独重跑 990 / 990 通过（本轮无代码改动）。
+- 本轮无用户可见交互改动，未打 tag，未提交 AdSense 重提，未宣告作品级全项通过。
