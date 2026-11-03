@@ -181,6 +181,8 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 
 ## 变更日志
 
+- 2026-11-03 — 增长批次 1（TOTP 分流、10 页标题与内链、4 周基线）。TOTP 四语工具页新增 `validator-vs-generator` FAQ（生成器 / 认证器 App / 服务端校验的区别）与「相关工具与下一步」5 条链接（TOTP 指南、HMAC、二维码解码、二维码生成、密码生成）；`tools.ts` 的 relatedSlugs 已双向，未改。6 个工具页四语改写 `seoTitle` / `seoDescription` 并补 3 条同族内链：line-tools、yaml-validator、jsonl-converter、gitignore-generator、base64、yaml-json；英文标题全部 ≤60 字符，zh / ja / ko 含后缀全部 ≤30 字符。`aspect-ratio-calculator-guide` 与 `dns-lookup-guide` 只改 en 标题与摘要，后者仍为 `noindex`；两条 draft 指南（protobuf-to-json、markdown-preview）因 `draft: true` 且已 301，未改，证据见 `docs/2026-11-03-growth-content-changes.md`。新增 `docs/2026-11-03-growth-baseline.md`（Bing 周点击 287、AI citations 1,952、GSC 非品牌 3 / 582 / 0.52%、TOTP 占 Bing 点击 45.1%，2026-12-01 复查，Bing 周点击 ±20% 内算波动，TOTP 占比 <40% 算分散有进展）。不改计算引擎、隐私、统计与部署配置。验证：audit 24 PASS、build 通过、parity 7,753、llms 1,010、170 个 test 脚本 169 个退出 0，`test-csv-json` 批量跑 exit 139 后单独重跑 990 通过。随 v1.142.11 发布。
+
 - 2026-11-03 — 404 清理与 Bing / AI 周环比复核（`docs/2026-11-03-bing-ai-and-404-review.md`）。Bing 三个月日均点击 28.1 → 31.3，AI citations 日均 321.7 → 316.6，日报里的上周 -13.8% / -27.4% 属周内波动，不是结构性下滑；`/zh/tools/totp-generator/` 占 Bing 点击 367 / 814。补 12 条 301（`/protobuf`、`/zero-width`、`/tools/jwt-denerator`、`/tools/css`、`/tools/AGENTS`、两条 `/url` 尾巴，含带 / 不带尾斜杠），并把 `/protobuf`、`/tools/css`、`/tools/AGENTS` 加入 `_routes.json` 的 exclude：否则 Astro Worker 会先以 200 返回目标页，`_redirects` 不生效（已用本地预览逐条验证 301）。随 v1.142.10 发布。
 
 - 2026-11-03 — Sir 决定：接受 W4 37 / 40 的现状，不为 3 个外部限制改任务口径或产品；不做本人走查。按《作品级标准》不宣告「40 个工具 + 站点五项全部通过」，AdSense 重提另行决定。同日 v1.142.9 复测 S3 五页：实验室 LCP 1.06–1.75 s、CLS 0–0.00129、TBT 24–467 ms，全部达标；CrUX 仍为 No Data，INP 无法判定，S3 维持证据不足。见 `docs/2026-11-03-s3-lab-remeasure.md` 与当前矩阵。
