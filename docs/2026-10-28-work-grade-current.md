@@ -4,7 +4,7 @@
 
 2026-10-28 批次 G 按 Sir 批准的「备选站」规则重测了 W4 的最后 10 个工具：前三名里某站无法完成同一任务时，按同一次搜索结果顺延取下一个可用站点补足。结果 6 个通过；`eyedropper-color-picker` 经键盘复测后改判通过，W4 通过从 30 增至 37，余 3 个外部限制。证据见 `2026-10-28-w4-batch-g.md` / `.json` 与 `2026-10-28-w4-eyedropper-keyboard.md`。
 
-2026-11-03 补做 W3 本机采样。主跑按 Sir 当日批准的 `< 15` 口径（不是原标准）；其中 8 个 max load 在 10–14.18 的样本已在原 `< 10` 门槛下补测替换，最终 120 / 120 满足原标准。40 个工具 × 3 个样本全部完成，W3 从 0 / 0 / 40 变为 30 通过 / 10 不通过 / 0 证据不足。证据见 `2026-11-03-w3-sampling.md` / `.json`。
+2026-11-03 补做 W3 本机采样。W3 的一分钟 load 门槛自 2026-11-03 起按 Sir 批准修订为 `< 15`；本轮 120 个样本最终仍全部满足更严的原 `< 10`。40 个工具 × 3 个样本全部完成，W3 从 0 / 0 / 40 变为 30 通过 / 10 不通过 / 0 证据不足。`image-to-base64` 复测 111 / 95 / 97 ms，仍有一例 `> 100`，保留在不通过。证据见 `2026-11-03-w3-sampling.md` / `.json`。
 
 ## 工具矩阵（40 个）
 
@@ -14,7 +14,7 @@
 |---|---:|---:|---:|---|
 | W1 结果可信 | 40 | 0 | 0 | AES 的 W1 按 v1.141.3 修复与回归改判为通过：输入 / 密钥 / 参数 / 文件 / 清空后旧任务不再写回，203 项页面回归与 32 个浏览器场景通过。其余 39 个维持 2026-10-24 的通过。 |
 | W2 边界说清楚 | 40 | 0 | 0 | 沿用 2026-10-24 证据。 |
-| W3 响应及时 | 30 | 10 | 0 | 2026-11-03 本机补测：40 个工具 × 3 个样本，120 个全部完成。主跑按 Sir 当日批准的 `< 15` 口径；其中 8 个 max load 在 10–14.18 的样本已在原 `< 10` 门槛下补测替换，最终 120 / 120 满足原标准。按 100 ms 主线程门槛，30 个通过；10 个不通过（`cookie-parser` 1868 ms、`markdown-to-word` 1629、`markdown-table-generator` 1158、`unicode-text-converter` 667、`text-to-binary` 631、`eyedropper-color-picker` 462、`hmac-generator` 346、`aes-encrypt-decrypt` 167、`qr-code-decoder` 161、`image-to-base64` 102）。取消 4 / 4 通过；旧结果作废 2 / 2 通过，`file-hash-checker` 的竞争窗口不可判定。见 `2026-11-03-w3-sampling.md` / `.json`。 |
+| W3 响应及时 | 30 | 10 | 0 | 2026-11-03 本机补测：40 个工具 × 3 个样本，120 个全部完成。W3 的一分钟 load 门槛自 2026-11-03 起按 Sir 批准修订为 `< 15`；本轮 120 个样本最终仍全部满足更严的原 `< 10`。按 100 ms 主线程门槛，30 个通过；10 个不通过（`cookie-parser` 1868 ms、`markdown-to-word` 1629、`markdown-table-generator` 1158、`unicode-text-converter` 667、`text-to-binary` 631、`eyedropper-color-picker` 462、`hmac-generator` 346、`aes-encrypt-decrypt` 167、`qr-code-decoder` 161、`image-to-base64` 102；复测 111 / 95 / 97，仍有一例 `> 100`）。取消 4 / 4 通过；旧结果作废 2 / 2 通过，`file-hash-checker` 的竞争窗口不可判定。见 `2026-11-03-w3-sampling.md` / `.json`。 |
 | W4 交互顺手 | 37 | 0 | 3 | 40 个工具都走了一遍同任务：ZeroTool 鼠标主流程 40 / 40，键盘到达主输入框 40 / 40，纯键盘完成主流程 40 / 40（`eyedropper-color-picker` 于 2026-10-28 复测可用，见 `2026-10-28-w4-eyedropper-keyboard.md`）。竞品 3 格及以上 37 个、1–2 格 3 个（`protobuf-to-json` 1、`color-palette-generator` 2、`qr-code-generator` 2）、0 格 0 个；同时具备竞品与键盘两项的 37 个。剩余 3 个记外部限制：protobuf 可用站点已耗尽，配色生成器只有 2 / 10 能从指定基色生成，二维码只有 2 / 10 能免注册交付 PNG（只认 PNG）。见 `2026-10-28-w4-batch-g.md` 与 `-observations-fix.md`。 |
 | W5 看起来是一个整体 | 40 | 0 | 0 | 沿用 2026-10-24 的 640 组四语 × 两主题 × 两视口记录。 |
 | W6 说真话 | 40 | 0 | 0 | 覆盖率 40 / 40。八批共审查 4,503 条语言级陈述：supported 3,064、corrected 773、qualified 428、unverified 238；未核实项均在逐工具证据中标出，主要是带日期的竞品 / 浏览器观察与少数无法取得的一手来源。 |
