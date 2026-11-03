@@ -94,3 +94,8 @@ Review on 2026-12-01 with the same queries and filters: referring domains and GS
 - No vote solicitation, multiple accounts, or duplicate posts without a canonical.
 - No unsupported claims: no "100% client-side", no "faster than X" without measurement.
 - Do not submit the multi-tool site to single-purpose DNS lists; submit a standalone asset only if it exists.
+
+## 2026-11-04 执行记录
+
+- dev.to：已发布 [Five Markdown Renderers, One Table: Where They Actually Differ](https://dev.to/kassol/five-markdown-renderers-one-table-where-they-actually-differ-509c)。正文含两处链向 `https://zerotool.dev/blog/markdown-table-generator-guide/` 与 `https://zerotool.dev/tools/markdown-table-generator/`，2026-11-04 用 curl 核对 `rel="noopener noreferrer"`（无 nofollow），已记入 `backlink-ledger.csv`。
+- 免账号投稿逐项核对后均未执行：Cooperpress 的 Airtable 分享链接返回 “This private share link is no longer available.”；Console.dev 只提供 `hello@console.dev` 邮件；Markdown Guide 需要 GitHub wiki 编辑；Web Tools Weekly 需要 X / Bluesky 私信。按 Sir 2026-11-04 的决定，邮件与其余账号暂不做。
