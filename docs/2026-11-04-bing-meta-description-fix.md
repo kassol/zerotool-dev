@@ -33,6 +33,38 @@
 
 共 16 条。英文 160–183 字符，中日韩 157–250 字符；新增内容只描述页面已有能力（如 XML 的行列错误、图片按文件头识别格式、TOTP 不保存密钥、零宽支持的解码格式、Markdown 转 Word 的列表与字体选项）。
 
+第二批（首页与目录，8 条，部署前 110 / 63 / 69 / 81 与 116 / 58 / 约 60 / 约 70）：
+
+| 页面 | 修改后长度 |
+|---|---:|
+| `/`（en） | 189 |
+| `/zh/` | 169 |
+| `/ja/` | 180 |
+| `/ko/` | 193 |
+| `/tools/` | 201 |
+| `/zh/tools/` | 155 |
+| `/ja/tools/` | 169 |
+| `/ko/tools/` | 166 |
+
+第三批（按 BWT 曝光排序的 12 个页面）：
+
+| 页面 | 曝光（2026-10-02–27） | 修改前 | 修改后 |
+|---|---:|---:|---:|
+| `/ja/blog/html-entity-guide/` | 1,093 | 109 | 162 |
+| `/ja/blog/hmac-generator-guide/` | 639 | 110 | 161 |
+| `/ja/tools/nato-phonetic-alphabet/` | 428 | 96 | 158 |
+| `/zh/tools/keycode-explorer/` | 251 | 103 | 160 |
+| `/ja/blog/ip-subnet-calculator-guide/` | 190 | 105 | 159 |
+| `/zh/tools/html-to-markdown/` | 163 | 73 | 157 |
+| `/zh/tools/text-to-ascii-art/` | 158 | 92 | 159 |
+| `/zh/tools/sqlite-viewer/` | 153 | 74 | 161 |
+| `/zh/tools/pkce-generator/` | 144 | 113 | 168 |
+| `/zh/tools/ascii-converter/` | 144 | 45 | 153 |
+| `/zh/tools/ai-token-counter/` | 81 | 117 | 161 |
+| `/zh/tools/pixelate-image/` | 81 | 60 | 159 |
+
+第三批新增内容同样只取自页面已有事实：html-to-markdown 没有表头的表格原样保留为 HTML、脚本与样式里的文字不会被删除；ascii-converter 支持 0x / 0o / 0b 前缀与 32–126 参考表；sqlite-viewer 上限 100 MB、每页 100 行、不保存改动；pixelate-image 支持格式与「动图只取第一帧」、密码请用纯色涂黑。
+
 ## 未处理
 
 - 其余约 350 个短描述页面：按流量与曝光分批处理，不一次改完。
