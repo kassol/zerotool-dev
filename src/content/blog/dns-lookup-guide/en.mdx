@@ -1,10 +1,9 @@
 ---
-title: "DNS Lookup in the Browser: DoH for A, MX, TXT, CAA"
-description: "How DNS-over-HTTPS returns A, AAAA, CNAME, MX, TXT, NS, SOA, CAA, PTR and SRV from a browser fetch, with DNSSEC and TXT gotchas."
+title: "DNS Lookup over HTTPS: A Complete Guide to DoH"
+description: "How DNS-over-HTTPS answers A, AAAA, CNAME, MX, TXT, NS, SOA, CAA, PTR and SRV queries from a browser, with DNSSEC, EDE, CORS, ECS and TXT quoting explained."
 pubDate: 2026-05-24
 updatedDate: 2026-11-03
 lang: "en"
-noindex: true
 tags: ["dns", "doh", "networking", "tls", "email", "developer-tools"]
 ---
 
@@ -12,13 +11,20 @@ A typical case: you flip the CNAME for `marketing.example.com` from Webflow to a
 
 [Look it up now →](/tools/dns-lookup/)
 
-The honest answer is "nobody's, the change just hasn't reached every recursive resolver yet" — but you cannot prove that from one `dig` against one resolver. You need to ask several public recursives, fast, and compare. Historically that meant a CLI loop, a paid network monitoring tool, or a multi-region checker site. The browser was no help: web pages cannot open UDP port 53 sockets and therefore cannot speak classic DNS. That changed when RFC 8484 standardised DNS-over-HTTPS in 2018 and Cloudflare and Google shipped public DoH endpoints that accept cross-origin requests. A `fetch()` call can now ask for any record type in one HTTPS request, and the JSON endpoints answer in plain JSON.
+The honest answer is "nobody's, the change just hasn't reached every recursive resolver yet" — but you cannot prove that from one `dig` against one resolver. You need to ask several public recursives, fast, and compare. Historically that meant a CLI loop, a paid network monitoring tool, or a multi-region checker site. The browser was no help: web pages cannot open UDP or TCP sockets to port 53, so they cannot speak classic DNS. RFC 8484 changed that in 2018 by standardising DNS-over-HTTPS, and Cloudflare and Google run public DoH endpoints that a page can call with `fetch()`.
 
-ZeroTool's DNS Lookup wraps those endpoints. It is the same `fetch()` you would write yourself, with record cards grouped by type, a `dig`-style raw view, and parallel queries for the eight most-asked types when you pick **ALL**. Below is the operational guide: how DoH actually works, what each record type tells you in practice, and the five gotchas that bite anyone debugging DNS from the wrong vantage point.
+This guide covers the whole path: how DoH encodes a query, what each record type tells you, how DNSSEC and Extended DNS Errors show up in the JSON, where Cloudflare and Google differ, why CORS and ECS matter, and which conclusions you cannot draw from a browser lookup. The concrete numbers were measured with the [ZeroTool DNS Lookup](/tools/dns-lookup/), which sends the same requests shown below, on the dates printed next to them.
 
-## DNS-over-HTTPS in one paragraph
+## What DNS-over-HTTPS changes
 
-A traditional DNS query is a binary packet over UDP/53 (or TCP/53 when truncated). The browser does not expose a socket API for either. DoH solves this by encoding the same query as an HTTPS request. Two encodings exist: RFC 8484 binary (`POST` with `application/dns-message` body, base64url-encoded inside `GET ?dns=`) and the earlier JSON profile pioneered by Google and adopted by Cloudflare (`GET ?name=...&type=...` returning JSON). The JSON profile is not in any RFC. Cloudflare's documentation says it follows Google's schema, so the fields match, with the small differences covered below:
+A traditional DNS query is a binary message over UDP port 53, with TCP port 53 as the fallback when a response is truncated (RFC 1035 §4.2). The browser exposes no socket API for either. DoH wraps the same DNS message in an HTTPS request, so the query looks like ordinary web traffic on port 443 and is encrypted on the wire (RFC 8484).
+
+Two encodings exist:
+
+- **The RFC 8484 wire format.** A `POST` with `Content-Type: application/dns-message`, or a `GET` with the message base64url-encoded in `?dns=`. The response body is a DNS message.
+- **The JSON profile.** A `GET` with `?name=…&type=…` that returns JSON. It has no RFC; Cloudflare's documentation says it follows Google's schema, so the fields line up, with the differences covered below.
+
+The browser does not need a DNS API for the JSON profile because the request is a normal cross-origin `GET`. On 2026-11-03 both endpoints answered with `access-control-allow-origin: *`, which is what lets a page on any origin read the response. The tool sends an `Accept: application/dns-json` header; `Accept` is a CORS-safelisted request header, so a `GET` with it does not trigger a preflight. A `POST` with a custom `Content-Type`, or any non-safelisted header, does trigger one, which is one reason the JSON profile is the easier choice in a page.
 
 ```json
 {
@@ -36,58 +42,158 @@ A traditional DNS query is a binary packet over UDP/53 (or TCP/53 when truncated
 }
 ```
 
-`Status` is the standard DNS RCODE (RFC 1035 §4.1.1, extended by RFC 6895). `AD` is the DNSSEC "Authenticated Data" flag: both providers document it as true only when every record in the answer was validated. RFC 6840 §5.8 says a resolver should set it only when the query sets the DO or AD bit, and without `do=1` Cloudflare's AD flag varies (see below). `TC` is the truncation flag; Cloudflare's documentation says it is almost always false over DoH because the resolver supports the maximum response size.
+The fields are the DNS header and sections in JSON form. `Status` is the RCODE (RFC 1035 §4.1.1, extended by RFC 6895): 0 is NOERROR, 2 is SERVFAIL, 3 is NXDOMAIN. `TC` is the truncation flag; Cloudflare's documentation says it is almost always false over DoH because the resolver accepts the maximum response size. `RD` and `RA` describe recursion. `AD` and `CD` are the DNSSEC flags. `Question`, `Answer`, `Authority` and `Additional` mirror the four DNS sections. `Comment` carries resolver diagnostics, and Google adds `extended_dns_errors` for structured EDE data.
 
-The tool sends `do=1` (DNSSEC OK) and `cd=0` (Checking Disabled = 0). `cd=0` asks the resolver to validate DNSSEC; `do=1` asks it to include the signatures. Without `do=1`, Cloudflare's AD flag is not reliable. On 2026-09-30 we sent each query 30 times without it: `example.com` A, AAAA and NS came back `"AD": false` every time, and MX came back `true` every time. An earlier run of 20 `example.com` A queries gave 10 `true` and 10 `false`. With `do=1`, and from Google either way, every answer had `true`. To rely on AD, send `do=1`. The opposite, `cd=1`, tells the resolver to skip validation — useful for forensic inspection of a broken zone but not what you want for normal lookups.
+The request parameters are close but not identical:
+
+| Parameter | Cloudflare | Google | Meaning |
+|---|---|---|---|
+| `name` | required | required | Query name; Google accepts RFC 4343 backslash escapes |
+| `type` | optional, default `A` | optional, default `1` | Record type as a name or a number |
+| `do` | `0` / `1` | `0` / `1` | Include DNSSEC records (RRSIG, NSEC, NSEC3) |
+| `cd` | `0` / `1` | `0` / `1` | Disable DNSSEC validation |
+| `ct` | — | `application/dns-message` | Return a binary DNS message instead of JSON |
+| `edns_client_subnet` | — | `1.2.3.4/24` | Send a client-subnet hint to authoritative servers |
+| `random_padding` | — | any value | Value ignored; pad the URL for traffic-analysis resistance |
+
+Both providers document `do` as the DNSSEC OK bit and `cd` as Checking Disabled. The tool sends `do=1` and `cd=0`: ask for signatures and let the resolver validate. Without `do=1`, Cloudflare's AD flag is not reliable (see the DNSSEC section).
 
 ## The ten record types, and what they tell you
 
-The tool exposes ten types. Each answers a specific operational question. Pick the wrong one and you spend hours chasing a phantom misconfiguration.
+Each type answers a different operational question. Pick the wrong one and you spend hours chasing a phantom misconfiguration.
 
 | Type | Code | Asks | Common ops failure when missing or wrong |
 |---|---:|---|---|
-| `A` | 1 | "What IPv4 address serves this name?" | Site loads on dev's machine, 404 on someone else's — stale A vs new A. |
-| `AAAA` | 28 | "What IPv6 address serves this name?" | An AAAA that still points at an old host breaks the site for clients that prefer IPv6, while testers on IPv4-only networks see nothing wrong. |
-| `CNAME` | 5 | "What canonical name does this alias point at?" | CNAME pointing at a deleted Heroku app, or pointing at the wrong tenant of a SaaS. |
-| `MX` | 15 | "Which servers accept mail for this domain?" | All inbound email bounces with "no MX record found" or routes to the wrong provider after a migration. |
-| `TXT` | 16 | "What policy strings are published?" | SPF says soft-fail, DMARC reports show legitimate mail flagged as spam, domain verification stuck at "pending". |
-| `NS` | 2 | "Who is authoritative for this zone?" | Registrar transfer left NS pointing at the old provider; updates do not propagate at all. |
-| `SOA` | 6 | "Who is the primary server, and how often should secondaries refresh?" | Authoritative zone serving stale data because secondaries cached past the SOA refresh window. |
-| `CAA` | 257 | "Which Certificate Authorities may issue for this domain?" | A CA that is not listed refuses to issue, so a renewal fails after a move to a new CA or CDN. |
-| `PTR` | 12 | "What name does this IP claim to be?" | Mail bounces because the sending IP's PTR does not match the HELO domain; reputation services flag the sender. |
-| `SRV` | 33 | "Where does service `_xmpp-client._tcp` (etc.) live?" | XMPP, SIP, LDAP, or Matrix federation cannot find the host because SRV is missing or has the wrong port. |
+| `A` | 1 | Which IPv4 address serves this name? | Site loads on the developer's machine, 404 on someone else's — stale A vs new A. |
+| `AAAA` | 28 | Which IPv6 address serves this name? | An AAAA that still points at an old host breaks the site for clients that prefer IPv6, while IPv4-only testers see nothing wrong. |
+| `CNAME` | 5 | Which canonical name does this alias point at? | A CNAME to a deleted Heroku app or to the wrong tenant of a SaaS. |
+| `MX` | 15 | Which servers accept mail for this domain? | Inbound mail bounces with "no MX record found" or routes to the wrong provider after a migration. |
+| `TXT` | 16 | Which policy strings are published? | SPF says soft-fail, DMARC reports show legitimate mail flagged as spam, domain verification stuck at "pending". |
+| `NS` | 2 | Who is authoritative for this zone? | A registrar transfer left NS pointing at the old provider; updates do not propagate at all. |
+| `SOA` | 6 | Who is the primary server, and how often do secondaries refresh? | Secondaries serve stale data past the SOA refresh window, or a negative answer is cached too long. |
+| `CAA` | 257 | Which certificate authorities may issue for this domain? | A CA that is not listed refuses to issue, so renewal fails after a move to a new CA or CDN. |
+| `PTR` | 12 | Which name does this IP claim? | Mail bounces because the sending IP's PTR does not match the HELO domain; reputation services flag the sender. |
+| `SRV` | 33 | Where does a service such as `_xmpp-client._tcp` live? | XMPP, SIP, LDAP or Matrix federation cannot find the host because SRV is missing or has the wrong port. |
 
-The tool's **ALL** mode fans out parallel `Promise.all` requests for the first eight types simultaneously, which is the right default for the most common operational question: "show me everything about this zone." PTR and SRV are excluded from ALL because PTR requires you to type the in-addr.arpa form (e.g. `34.216.184.93.in-addr.arpa`) rather than a domain name, and SRV requires a specific underscore-prefixed name (`_xmpp-client._tcp.example.com`). Both make sense as targeted single-type queries rather than as part of a sweep.
+The tool's **ALL** mode fans out parallel requests for the first eight types, which is the right default for "show me everything about this zone". PTR and SRV are excluded because PTR requires the `in-addr.arpa` form (`34.216.184.93.in-addr.arpa`) rather than a domain name, and SRV requires an underscore-prefixed service name (`_xmpp-client._tcp.example.com`). Both work better as targeted single-type queries.
 
-## Why your dig and the tool can disagree
+## A, AAAA and CNAME
 
-The most common surprise: `dig` on a developer laptop and DoH from a browser produce different answers for the same name. There are four boring reasons and one interesting one.
+`A` and `AAAA` return addresses with a TTL. A name can have several records, and CDNs rotate them. The TTL is the number of seconds a resolver may cache the set; it is not a promise about how long the change takes to reach every resolver, because each recursive resolver started its own countdown at a different time.
 
-**Local recursive cache.** Your laptop, your router, or your corporate forwarder caches DNS for the duration of the TTL on each record. A TTL of 86400 (24h) on a CNAME means a change at the authoritative server can take up to 24 hours to reach your laptop. The DoH call asks Cloudflare or Google, whose caches are independent of yours. Run the lookup once with Cloudflare and once with Google and compare the answers — if Cloudflare returns the new value and Google returns the old, you are watching propagation in progress.
+A `CNAME` answer says "this name is an alias for that name". The resolver usually follows the chain and appends the target's `A`/`AAAA` records, so a CNAME query can return several record types. Read the `name` field to see which record belongs to which step of the chain.
 
-**Split-horizon DNS.** Corporate networks, VPNs, and Active Directory environments routinely run an internal authoritative resolver that returns different answers for the same name. `internal-tools.example.com` may resolve to `10.42.0.5` for anyone behind the firewall and NXDOMAIN for anyone outside. The DoH call sees the outside view. If the tool returns NXDOMAIN for a name that works on your work machine, the zone is split-horizon and the public DNS does not know about that name.
+Two rules cause most CNAME surprises:
 
-**Geo-routed answers.** Cloudflare, Akamai, AWS Global Accelerator, and most CDNs return different A/AAAA records depending on which edge POP receives the query. The IP you see in the tool is the one Cloudflare or Google's recursive saw from *their* network position, not yours. For "is this IP correct?" questions, the tool is the right answer for a generic public viewer; for "is this IP correct from my POP?" you need to query from that POP.
+- **No other data at a CNAME node.** A name with a CNAME cannot hold other records (RFC 1034 §3.6.2, RFC 1912 §2.4). The zone apex must hold SOA and NS, so it cannot be a plain CNAME.
+- **Flattening hides the CNAME.** Cloudflare's CNAME flattening and Route 53 alias records answer the apex with A/AAAA records at query time. A DoH query for such an apex returns addresses, not the CNAME you configured in the dashboard. That is correct behaviour, and it looks like a missing record if you expect the alias.
 
-**EDNS Client Subnet (RFC 7871).** Some authoritative servers return more accurate geo-routed answers when the recursive resolver forwards a hint about the client's subnet. Google Public DNS "normally sends approximate network information (usually zeroing out the last part of your IPv4 address)"; Cloudflare's FAQ says 1.1.1.1 does not send ECS. The same geo-routed name can therefore resolve to different IPs through the two, and Google's answer depends on where the query comes from. Google's JSON API lets you set the subnet with the `edns_client_subnet` parameter (the tool does not send it). On 2026-09-30, `www.qq.com` returned `121.14.77.201` and `121.14.77.221` for `114.114.114.0/24`, `43.159.109.55` for `8.8.8.0/24`, and `43.168.224.173` for `139.130.4.0/24`. Cloudflare ignored the same parameter and returned `43.159.109.55`.
+## MX and TXT
 
-**The interesting one: stale negative caches.** RFC 2308 specifies that NXDOMAIN responses are cacheable. Because the missing record has no TTL of its own, the negative-cache time is the smaller of the SOA record's TTL and its MINIMUM field (RFC 2308 §5). If a zone was misconfigured for an hour and your local recursive cached the NXDOMAIN, the tool can return the correct answer while every local query keeps failing until that time runs out. The fix is to wait — or to lower the SOA MINIMUM before a zone change.
+`MX` records carry a preference and a host. Lower preference is tried first (RFC 5321 §5.1); equal values are a load-balancing hint. If a domain publishes no MX at all, SMTP treats the domain's A/AAAA as an implicit MX with preference 0 (RFC 5321 §5.1). That is why "no MX" does not always mean "no mail".
 
-## Reading the summary pills
+A **Null MX** is the explicit way to say "this domain accepts no mail": a single record with preference 0 and target `.` (RFC 7505). If a domain you expected to receive mail returns `0 .`, the zone owner published that on purpose; the fix is to edit the zone, not to wait for propagation.
 
-Five pills sit above the records view. Each compresses one operational signal:
+`TXT` carries SPF at the domain itself (RFC 7208), DMARC at `_dmarc.example.com` (RFC 7489 §6.1), and DKIM public keys at `selector._domainkey.example.com` (RFC 6376 §3.6.1). The same type also holds site-verification tokens for search consoles and SaaS products, which is why one TXT query can return a dozen unrelated strings.
 
-- **NOERROR / NXDOMAIN / SERVFAIL** — the RCODE. NOERROR means the query was processed correctly; the zero records that may accompany it mean "this name exists but has no records of that type". NXDOMAIN means the name does not exist anywhere in the zone. SERVFAIL means the recursive resolver could not complete the query — often DNSSEC validation failed, or the authoritative servers returned an error.
-- **N records** — count of records in the Answer section. When NOERROR comes back with 0 records, the chosen type is the wrong question for this name. Check NS for the zone you actually want.
-- **DNSSEC ✓ / no DNSSEC / DNSSEC failed** — the AD flag. A "no DNSSEC" pill means the zone is unsigned or a CNAME in the answer leads into an unsigned zone; a signature that fails validation returns SERVFAIL instead. When the SERVFAIL carries a DNSSEC Extended DNS Error (codes 1, 2 and 5 to 12 in RFC 8914), the pill reads "DNSSEC failed". Any other SERVFAIL hides the pill, because the resolver sent no answer to judge. The `com`, `org` and `dev` TLDs are signed (each has a DS record in the root zone), but a domain under them is signed only if its owner turns DNSSEC on: `example.com` is, `zerotool.dev` is not.
-- **Resolver** — which DoH endpoint answered. Useful when comparing Cloudflare and Google side by side.
-- **Latency** — round-trip from `fetch()` start to JSON parse. The first lookup includes the HTTPS connection setup to the resolver, so it is slower than the ones after it.
+The 255-byte rule is the part that breaks parsers. A TXT record is a sequence of character-strings, each at most 255 bytes (RFC 1035 §3.3 and §3.3.14). A long SPF or DKIM value is stored as several strings, and the consumer joins them with nothing in between (RFC 7208 §3.3 for SPF, RFC 6376 §3.6.2.2 for DKIM). The JSON APIs disagree on presentation: in a 2026-11-03 query, Cloudflare returned each string quoted and separated by a space, as `dig` prints it, while Google returned the same key as one unquoted string. For `cf2024-1._domainkey.zerotool.dev`, Cloudflare returned 425 characters with one `" "` join after the first 255-character string; Google returned 420 characters. Strip quotes only when they are present, and never insert a separator between segments.
 
-## Writing the same query yourself
+Google's documentation notes that TXT records are encoded as a single JSON string even when the underlying record has multiple strings, and its own examples show quoted chunks. The practical rule is therefore: treat the `data` value as presentation text, remove the quoting the resolver added, and join segments without spaces.
 
-The tool exists because clicking beats scripting for one-off lookups. For automation, the DoH JSON profile is short enough to drop into any language with `fetch`. Here are three reference implementations, each useful in a different context.
+## NS, SOA and negative answers
 
-The browser / Node 18+ version is two lines once you have a domain:
+`NS` records list the authoritative name servers for a zone. They tell you where the answer comes from and whether a registrar transfer or a provider migration left the delegation pointing at the wrong place. The TTL on the NS set is usually long (86,400 seconds is common), so a change can take a day to be seen everywhere.
+
+`SOA` carries the zone's primary server, the responsible mailbox, the serial number, and four timers: refresh, retry, expire, and minimum (RFC 1035 §3.3.13). The serial is how secondaries notice a change — when a zone transfer is broken, comparing serials on the primary and the secondary is the fastest check.
+
+The minimum field also controls negative caching. When a name does not exist, the authoritative server returns NXDOMAIN with the zone's SOA in the authority section. The negative answer is cacheable for the smaller of the SOA's own TTL and its MINIMUM field (RFC 2308 §5). A resolver that cached that NXDOMAIN keeps returning it until the timer expires, even after the zone is fixed. That is a common reason a browser lookup shows the correct record while one laptop keeps failing.
+
+NXDOMAIN and NODATA are different. NXDOMAIN (`Status` 3) means the name does not exist. NODATA is NOERROR with zero answers: the name exists but has no record of the requested type. A `CAA` query for a domain without CAA returns NODATA, with the SOA in `Authority`; a query for a misspelled name returns NXDOMAIN. When you see NOERROR with zero records, the type is the wrong question — check `NS` for the zone you meant.
+
+## CAA
+
+CAA (RFC 8659) tells public certificate authorities which of them may issue for a domain. A compliant CA checks CAA before issuance. If a CAA RRset exists and no `issue` property names the CA, that CA must not issue (RFC 8659 §3). If no CAA RRset exists, the domain places no CAA restriction on issuance.
+
+A zone that allows Let's Encrypt and Google Trust Services and blocks wildcard certificates looks like this:
+
+```text
+example.com. 0 issue "letsencrypt.org"
+example.com. 0 issue "pki.goog"
+example.com. 0 issuewild ";"
+example.com. 0 iodef "mailto:security@example.com"
+```
+
+`issuewild ";"` denies all wildcard issuance. `iodef` tells CAs where to send a report when they receive a request from an unauthorised issuer. A CAA record is the only DNS query that reveals this restriction; forgetting to update it when you move to a CDN or a new CA is a classic cause of a failed renewal that looks like a TLS problem.
+
+## PTR and SRV
+
+`PTR` maps an address back to a name. IPv4 reverse names live under `in-addr.arpa` with the octets reversed (RFC 1035 §3.5); IPv6 reverse names live under `ip6.arpa` with the nibbles reversed (RFC 3596 §2.5). Mail servers often check that the sending IP's PTR exists and matches the HELO name, which is why a missing PTR shows up as a deliverability problem rather than a DNS problem. A PTR alone does not prove ownership: the name should resolve forward to the same address.
+
+`SRV` records publish a host and port for a service, with priority and weight, under names such as `_xmpp-server._tcp.example.com` (RFC 2782). Clients that support SRV try the lowest priority first and use weight to spread load among equals. If no SRV record exists, clients fall back to the service's well-known port on the domain, which is why some services work without SRV and others require it.
+
+## DNSSEC: the AD flag and EDE
+
+DNSSEC adds signatures to DNS data. A validating resolver checks the chain from the root's trust anchor down to the zone, and reports the result in the `AD` (Authenticated Data) flag. RFC 4035 §3.2.3 defines when the flag may be set; RFC 6840 §5.8 adds that a resolver should set it only when the query also carried the DO or AD bit. That is why the tool sends `do=1`.
+
+Without `do=1`, Cloudflare's AD flag varies. On 2026-09-30 we sent each query 30 times without it: `example.com` A, AAAA and NS came back `"AD": false` every time, and MX came back `true` every time. An earlier run of 20 A queries gave 10 `true` and 10 `false`. With `do=1`, and from Google either way, every answer had `true`. If you plan to read AD, send `do=1`.
+
+A signed zone with a valid chain returns NOERROR and `AD: true`. An unsigned zone returns NOERROR and `AD: false`; that is not an error, it means the zone does not use DNSSEC. A zone with a broken chain returns SERVFAIL, and `AD` is false because there is no validated answer. SERVFAIL alone does not distinguish "DNSSEC is broken" from "the authoritative servers are unreachable"; the resolver's diagnostic does.
+
+That diagnostic is the Extended DNS Error option (RFC 8914), a numeric code plus human-readable text. The codes that matter for DNSSEC are 1 (unsupported DNSKEY algorithm), 2 (unsupported DS digest type), 5 (indeterminate), 6 (bogus), 7 (signature expired), 8 (signature not yet valid), 9 (DNSKEY missing), 10 (RRSIGs missing) and 12 (NSEC missing). Cloudflare returns them in `Comment` as an array of strings such as `EDE(9): DNSKEY Missing …`. Google returns a sentence in `Comment` plus a structured `extended_dns_errors` array with `info_code` and `extra_text`. The tool normalises both into an `EDE(n): text` note under the records.
+
+The documented test domain `dnssec-failed.org` shows the difference. On 2026-11-03, Cloudflare returned `Status: 2` with `Comment: ["EDE(9): DNSKEY Missing no SEP matching the DS found for dnssec-failed.org."]`. Google returned `Status: 2` with a `Comment` beginning "DNSSEC validation failure" and `extended_dns_errors: [{ "info_code": 9, "extra_text": "No DNSKEY matches DS RRs of dnssec-failed.org" }]`. Both are the same failure: the parent publishes a DS record, and the child has no DNSKEY that matches it.
+
+`cd=1` tells the resolver to skip validation. It is useful when you want to see the unvalidated data of a broken zone, and it is the wrong setting for a normal lookup. The tool always sends `cd=0`; use `dig +cd` when you need the other view.
+
+## Cloudflare vs Google: what actually differs
+
+Both endpoints speak the same JSON schema, but they are different resolvers with different networks and different caches. The differences that matter in practice:
+
+- **ECS.** Google Public DNS normally sends approximate network information to authoritative servers, usually zeroing out the last part of the IPv4 address; `edns_client_subnet=0.0.0.0/0` disables it. Cloudflare's FAQ says 1.1.1.1 does not send ECS. A CDN can therefore return different addresses through the two, and Google's answer depends on where the query comes from. On 2026-09-30, `www.qq.com` returned `121.14.77.201` and `121.14.77.221` for `114.114.114.0/24`, `43.159.109.55` for `8.8.8.0/24`, and `43.168.224.173` for `139.130.4.0/24` from Google; Cloudflare ignored the same parameter and returned `43.159.109.55`.
+- **TXT presentation.** Cloudflare quotes each string and separates segments with a space; Google returned one unquoted string in our 2026-11-03 query. Google's documentation shows quoted examples too, so treat quoting as presentation, not as a contract.
+- **Diagnostics.** Cloudflare's `Comment` is an array of EDE strings. Google's `Comment` is a sentence, and its structured `extended_dns_errors` array carries the code and text. Google also adds `Comment: "Response from <IP>."` for an uncached answer, naming the authoritative server it asked.
+- **DNSSEC record text.** With `do=1`, both include RRSIG records in `Answer`. The RRSIG text is not byte-identical: in our 2026-11-03 query Google lowercased the covered type mnemonic (`a 13 2 …`), Cloudflare uppercased it (`A 13 2 …`).
+- **Order and names.** RRsets are unordered, and the two resolvers return them in different orders. Do not compare two answers position by position; compare the sets.
+- **HTTP caching.** In the same query, Google's response carried `cache-control: private, max-age=300`; Cloudflare's did not. A repeat query can therefore be served from the browser or an intermediary cache for up to five minutes.
+
+The TTLs differ too, because each resolver's cache started at a different time. That is expected, not a sign that one of them is wrong.
+
+## Why the browser and the system resolver disagree
+
+A DoH lookup answers a different question from `dig` on your laptop. The differences are not bugs:
+
+- **Vantage point.** `dig` asks the resolver configured in the OS (or the server you name). The DoH call asks Cloudflare or Google. Each has its own cache, so one can hold an old record while the other has the new one.
+- **Hosts file and local overrides.** `dig` and `nslookup` send DNS queries; they do not normally read `/etc/hosts`. Normal application lookups do, through the OS resolver, and a VPN or a local DNS proxy can rewrite answers. A public DoH resolver sees none of that.
+- **Split-horizon DNS.** Corporate and VPN zones return internal addresses to clients inside the network and NXDOMAIN outside. The DoH query sees the outside view, so an internal name that works at the office returns NXDOMAIN here.
+- **Search domains.** The OS may complete a bare hostname with a search suffix; the DoH endpoints require the full name.
+- **Browser Secure DNS.** Chrome, Edge and Firefox can use their own DoH resolver for the hostnames the browser resolves, including the resolver's own hostname. That setting changes which resolver answers for navigation; it does not change the resolver that the DoH request itself asks.
+- **The bootstrap problem.** The page must resolve `cloudflare-dns.com` or `dns.google` through the normal network path before it can send the DoH query. A content filter or captive portal that blocks those names prevents the lookup, even though the query itself would be encrypted.
+
+This is why a Pi-hole, NextDNS or AdGuard Home filter can make the tool useful (it sees the public answer while the local filter blocks) and misleading (the domain works in the tool while your network blocks it). It is also why a proxy app that answers port 53 in fake-IP mode can make `dig` print an address such as `198.18.2.147` from the benchmark range (RFC 6890 §2.2.2) while the DoH query returns the real one.
+
+## Common misdiagnoses
+
+**"It is still propagating."** Usually it is caching, and the TTL tells you how long. Check the TTL on the record and query a second resolver; if one has the new value and the other the old, you are watching cache expiry, not a broken zone.
+
+**"DNS is broken because one machine fails."** Check for a cached NXDOMAIN from an earlier misconfiguration. RFC 2308 §5 lets a resolver cache the negative answer for the SOA minimum, and the fix is to wait or to lower the SOA minimum before the change.
+
+**"The CDN is returning the wrong IP."** The DoH answer reflects the resolver's network position, not yours. Google's ECS hint moves the answer closer to the subnet you name; Cloudflare's does not. For "what does a user in São Paulo see?", query from that region.
+
+**"DNSSEC is fine because the site loads."** A validating resolver can fail while a non-validating one succeeds. A SERVFAIL with an EDE code is the signature of a validation failure; a SERVFAIL without one is more likely an unreachable authoritative server.
+
+**"The CNAME is missing."** The resolver followed it and returned A/AAAA records, or the zone uses CNAME flattening at the apex. Query the alias itself and read the `name` field of each answer.
+
+**"The TXT record is truncated."** It is multiple 255-byte strings. Remove the quotes and join the segments without a separator.
+
+**"There is no MX, so mail cannot work."** SMTP falls back to an implicit MX on the domain's A/AAAA (RFC 5321 §5.1). A Null MX (`0 .`) is the explicit "no mail" answer.
+
+**"There is no CAA record, so nobody can issue."** The opposite: no CAA RRset means no CAA restriction. A CAA RRset that omits a CA is what blocks that CA.
+
+## Running the same query yourself
+
+The tool exists because clicking beats scripting for one-off lookups. For automation, the JSON profile is short enough for any language with `fetch`.
+
+The browser or Node 18+ version:
 
 ```js
 const url = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent('zerotool.dev')}&type=MX&do=1&cd=0`;
@@ -96,9 +202,9 @@ const json = await res.json();
 console.log(json.Answer); // [{ name, type, TTL, data }, ...]
 ```
 
-Add `AbortSignal.timeout(5000)` if you want a timeout, and a `try/catch` if the network might fail. Both Cloudflare and Google DoH return JSON shapes that match the one above, so you can switch providers by swapping the URL.
+Add `AbortSignal.timeout(5000)` for a timeout and a `try/catch` for network failures. Both providers return the same overall shape, so switching providers means changing the URL and the resolver-specific parameters.
 
-The Python version uses `httpx` or `urllib`. With the standard library only:
+Python with the standard library:
 
 ```python
 import json
@@ -118,79 +224,25 @@ def doh(name: str, qtype: str, resolver: str = "cloudflare"):
 print(doh("zerotool.dev", "CAA"))
 ```
 
-For shell scripts and CI steps, `curl` plus `jq` is the canonical pairing. The following one-liner pulls every MX target for a domain, sorted by priority:
+For shell scripts and CI steps, `curl` plus `jq`:
 
 ```bash
 curl -s -H 'accept: application/dns-json' \
   'https://cloudflare-dns.com/dns-query?name=cloudflare.com&type=MX' \
-  | jq -r '.Answer[] | "\(.data)"' | sort
+  | jq -r '.Answer[] | select(.type == 15) | "\(.data)"' | sort
 ```
 
-Wrap it in a `for` loop and you have your own propagation tracker without leaving the terminal. Wrap it in a Bash function and put the function in `~/.bashrc` and you have replaced half of `dig` for ad-hoc work.
-
-## TXT segmentation — the 255-byte rule
-
-Long SPF, DKIM, and DMARC records routinely overflow the 255-byte limit that RFC 1035 §3.3.14 imposes on each individual string inside a TXT record. The DNS protocol allows multiple strings per TXT record; the convention for SPF (RFC 7208 §3.3) is to concatenate them with no separator to form the logical record. The two JSON APIs present the strings differently: Cloudflare keeps each string in quotes and separates strings with a space, as dig prints them, while Google joins them into one value without quotes. Cloudflare's form:
-
-```json
-{
-  "name": "google.com",
-  "type": 16,
-  "TTL": 300,
-  "data": "\"v=spf1 include:_spf.google.com ~all\""
-}
-```
-
-For a longer record you get two adjacent strings:
-
-```json
-{
-  "data": "\"v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@example.com; \" \"fo=1; aspf=r; adkim=r\""
-}
-```
-
-The tool renders the value exactly as the resolver delivered it. To get the logical value from Cloudflare's form, strip the outer quotes and the inter-segment quote-space-quote (`" "`); SPF (RFC 7208 §3.3) and DKIM (RFC 6376 §3.6.2.2) both say to join the strings with nothing in between. Google's form is already joined. For the DKIM key at `cf2024-1._domainkey.zerotool.dev`, Cloudflare returned 425 characters with one `" "` join after the first 255-character string, and Google returned the same key as 420 characters.
-
-## CAA — the one record that breaks TLS issuance
-
-CAA (RFC 8659) tells public Certificate Authorities which of them are permitted to issue for a domain. A compliant CA must check CAA before issuing, and a CA that no `issue` record names must not issue (RFC 8659 §3). Forget to update CAA when you move to a CDN or CA that uses another issuer, and the next certificate renewal fails. No other DNS query shows the restriction — only a CAA lookup tells you it is in place.
-
-A zone that allows Let's Encrypt and Google Trust Services (`pki.goog`) and blocks wildcard certificates looks like:
-
-```text
-example.com. 0 issue "letsencrypt.org"
-example.com. 0 issue "pki.goog"
-example.com. 0 issuewild ";"
-example.com. 0 iodef "mailto:security@example.com"
-```
-
-The `issuewild ";"` denies all wildcard issuance. The `iodef` tells CAs where to mail a report if they receive a request from an unauthorised issuer. The tool's CAA query reports each record with its tag (`issue`, `issuewild`, `iodef`) and value, which lets you confirm the policy before triggering an issuance.
-
-## Pitfalls
-
-**MX with priority 0 and `.` target.** RFC 7505 defines a "Null MX" record — `0 .` — meaning "this domain accepts no email, full stop". If your tool returns `0 .` for a domain you expected to handle mail, the registrar or DNS provider published the placeholder explicitly. Updating it requires editing the zone, not a propagation wait.
-
-**CNAME at the apex is illegal.** A name that has a CNAME cannot hold any other record (RFC 1034 §3.6.2, RFC 1912 §2.4), and the zone apex (`example.com`) must hold SOA and NS. Cloudflare (CNAME flattening) and Route 53 (alias records) offer records that look like a CNAME at the apex but are answered as A/AAAA at query time. A DoH query for the apex of such a zone returns the flattened A/AAAA, not the CNAME. This is correct behaviour but can confuse someone expecting to see the CNAME they configured in the dashboard.
-
-**Private resolvers and Pi-hole.** On a network running Pi-hole, NextDNS, AdGuard Home, or any DNS-based content filter, the normal lookups of your browser and OS go to that filter, which may rewrite or block responses. The tool's query travels over HTTPS to the public resolver, so the filter does not see the name you look up; the browser still resolves `cloudflare-dns.com` or `dns.google` through local DNS, though, and a filter can block those two names. This is why the tool can return the real answer when your laptop's normal lookup fails. Sometimes that helps (debugging a misconfigured Pi-hole rule) and sometimes it misleads (the tool reports a domain works while your network blocks it).
-
-**EDNS Client Subnet and CDN testing.** When testing geo-routing for a CDN, the IP returned by DoH reflects Cloudflare's or Google's view, not yours. To test from specific regions, use a multi-region checker such as DNS Checker, or run `dig` on a cloud VM in that region. ZeroTool's tool answers "what does this public resolver return?", not "what would my user in São Paulo see?".
-
-**DNSSEC failures look like server failures.** If a zone signs its DNSSEC chain incorrectly, both Cloudflare and Google return SERVFAIL with `AD=false`, the same code a resolver returns when it cannot reach the zone at all. The resolver notes under the records tell the two apart: for `dnssec-failed.org`, Cloudflare's note is `EDE(9): DNSKEY Missing ...` (Extended DNS Error 9, RFC 8914). Google sends a sentence that starts "DNSSEC validation failure" plus an `extended_dns_errors` field with code 9, which the tool shows as `EDE(9): No DNSKEY matches DS RRs of dnssec-failed.org`. With either resolver the pill reads "DNSSEC failed". The tool always sends `cd=0`, the correct default for everyday lookups; to see the unvalidated answer use `dig +cd`, and for a full analysis of the chain use DNSViz.
+The `select(.type == 15)` filter matters when `do=1` is set: the answer also contains RRSIG records, and a naive `.[]` prints them too.
 
 ## Where this fits among DNS lookup tools
 
-Each tool below answers a different question.
-
-[DNS Checker](https://dnschecker.org/) checks records "against a selected list of DNS servers in multiple regions worldwide" from its own servers and draws a propagation map. It answers "has this change reached every region yet?".
+[DNS Checker](https://dnschecker.org/) queries "a selected list of DNS servers in multiple regions worldwide" from its own servers and draws a propagation map. It answers "has this change reached every region yet?".
 
 [Google Admin Toolbox Dig](https://toolbox.googleapps.com/apps/dig/) sends the query to its own backend (`/apps/dig/lookup`). In a test on 2026-09-29 it showed "Record not found!" for `dnssec-failed.org`, with `rcode SERVFAIL` only in its raw view, and its flags line for the signed `example.com` read `QR RD RA`, without AD.
 
-
-
 `dig` and `kdig` are the CLI reference implementations, the right answer for scripting and for queries that need authoritative-server targeting (`dig @ns1.example.com`).
 
-ZeroTool's tool fills the in-between case: a developer who wants a quick lookup from the browser, on a machine where installing `dig` would mean adding a Homebrew package or a WSL distro, and who wants the public resolver's own answer rather than one relayed by a lookup site's server. You can switch between Cloudflare and Google and compare, see the AD flag and the resolver's notes, and copy the raw JSON. It is not the right tool for propagation maps or authoritative-only queries; for those, the tools above are better.
+ZeroTool's tool fills the in-between case: a developer who wants a quick lookup from the browser, on a machine where installing `dig` would mean adding a Homebrew package or a WSL distro, and who wants the public resolver's own answer rather than one relayed by a lookup site's server. You can switch between Cloudflare and Google and compare, see the AD flag and the resolver's notes, and copy the raw JSON. It is not the right tool for propagation maps or authoritative-only queries.
 
 ## Further reading
 
@@ -198,15 +250,18 @@ Internal:
 
 - [HTTP Header Analyzer](/tools/http-header-analyzer/) — once DNS resolves, what the server returns.
 - [SSL Certificate Decoder](/tools/ssl-certificate-decoder/) — confirm the certificate served at the resolved IP matches the hostname.
-- [URL Parser](/tools/url-parser/) — break a URL into protocol, host, port, path, query before resolving the host.
+- [URL Parser](/tools/url-parser/) — break a URL into protocol, host, port, path and query before resolving the host.
 - [IP Subnet Calculator](/tools/ip-subnet-calculator/) — once you have A/AAAA, derive subnet structure for firewall rules.
 
 External:
 
 - [RFC 8484 — DNS Queries over HTTPS](https://www.rfc-editor.org/rfc/rfc8484) — the DoH standard.
-- [Cloudflare DoH documentation](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/) — endpoint, parameters, JSON profile.
-- [Google Public DNS DoH](https://developers.google.com/speed/public-dns/docs/doh) — Google's documentation for `dns.google/resolve`.
-- [RFC 1035 — Domain Names](https://www.rfc-editor.org/rfc/rfc1035) — the original DNS specification; still the most useful reference for record formats.
-- [RFC 7208 — Sender Policy Framework](https://www.rfc-editor.org/rfc/rfc7208) — SPF, with the TXT segmentation rules.
+- [Cloudflare DoH JSON documentation](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/) — parameters and response fields, updated 2026-05-05.
+- [Google Public DNS JSON API](https://developers.google.com/speed/public-dns/docs/doh/json) — parameters, `extended_dns_errors` and the `Comment` field.
+- [RFC 1035 — Domain Names](https://www.rfc-editor.org/rfc/rfc1035) — the original DNS specification and record formats.
+- [RFC 2308 — Negative Caching of DNS Queries](https://www.rfc-editor.org/rfc/rfc2308) — the SOA minimum rule.
+- [RFC 6840 §5.8](https://www.rfc-editor.org/rfc/rfc6840#section-5.8) — when a resolver may set AD.
+- [RFC 8914 — Extended DNS Errors](https://www.rfc-editor.org/rfc/rfc8914) — the EDE codes.
+- [RFC 7208 — Sender Policy Framework](https://www.rfc-editor.org/rfc/rfc7208) — SPF and TXT segment joining.
 - [RFC 8659 — CAA](https://www.rfc-editor.org/rfc/rfc8659) — Certification Authority Authorization.
-- [RFC 6891 — EDNS(0)](https://www.rfc-editor.org/rfc/rfc6891) — the extension mechanism that EDNS Client Subnet rides on.
+- [RFC 6891 — EDNS(0)](https://www.rfc-editor.org/rfc/rfc6891) — the extension mechanism that ECS rides on.

@@ -150,7 +150,8 @@ export default defineConfig({
           return item;
         }
 
-        item.lastmod = new Date();
+        // Non-blog pages have no reliable content date; omit lastmod instead of
+        // stamping every URL with the build time.
         return item;
       },
     }),

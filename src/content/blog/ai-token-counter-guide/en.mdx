@@ -1,13 +1,15 @@
 ---
 title: "What Is a Token in AI? How Tokenizers Count Your Text"
-description: "A token is a piece of text with a number. See how GPT, DeepSeek, Claude and Gemini tokenizers split the same sentence, why counts differ by language, and how to count them."
+description: "A token is a piece of text with a number. See how byte-level BPE splits English, Chinese and code, why GPT, DeepSeek, Claude and Gemini counts differ, and how to read context limits and prices."
 pubDate: 2026-05-07
-updatedDate: 2026-10-01
+updatedDate: 2026-11-03
 lang: "en"
 tags: ["llm", "tokenizer", "gpt", "deepseek", "developer-tools"]
 ---
 
-A token is the unit a language model reads and writes. Before a model sees your prompt, a tokenizer cuts the text into pieces and replaces each piece with a number from a fixed vocabulary. Providers bill by these pieces, rate limits count them, and a model's context window is a maximum number of them. This article shows what the pieces look like for real text, why the same sentence gives different counts on different models, and how to count tokens yourself. Every count below comes from the [ZeroTool AI Token Counter](/tools/ai-token-counter/) and matches the providers' own tokenizers.
+A token is the unit a language model reads and writes. Before a model sees your prompt, a tokenizer cuts the text into pieces and replaces each piece with a number from a fixed vocabulary. Providers bill by these pieces, rate limits count them, and a model's context window is a maximum number of them.
+
+This guide shows what the pieces look like in real text, how byte-level BPE decides where to cut, why the same sentence produces different counts in GPT, DeepSeek, Claude and Gemini, and how to turn a count into a price and a context check. Every count below comes from the [ZeroTool AI Token Counter](/tools/ai-token-counter/), which runs the reference vocabularies in a Web Worker, and matches OpenAI's `tiktoken` and DeepSeek's official `tokenizer.json`. Prices and limits were checked on 2026-10-01 against the provider pages linked in the counter's cost table.
 
 ## A token is a piece of text with a number
 
@@ -23,7 +25,9 @@ That is 7 tokens for 22 characters. Common English words are single tokens, and 
 
 Pieces do not have to be whole characters. A tokenizer works on UTF-8 bytes, so a character the vocabulary does not hold is split into byte pieces. The parrot emoji 🦜 is 4 bytes in UTF-8 and becomes 3 tokens in `o200k_base`: `F0 9F`, `A6` and `9C`. None of them is a character on its own. The token view in the counter shows such pieces in hex inside ⟨⟩ boxes.
 
-## How a tokenizer decides where to cut
+This is why a token is neither a word nor a character. A 3-letter word can be one token or two; a single Chinese character can be one token, two byte tokens, or part of a longer token that covers a whole word. Only the vocabulary and the merge rules decide.
+
+## How byte-level BPE decides where to cut
 
 The tokenizers used by GPT, DeepSeek and most open models are byte-level BPE (byte pair encoding, from Sennrich et al., 2016). They work in two steps.
 
@@ -31,6 +35,8 @@ The tokenizers used by GPT, DeepSeek and most open models are byte-level BPE (by
 2. **Merge byte pairs by rank.** Each chunk starts as single bytes. The tokenizer repeatedly joins the adjacent pair that ranks highest in its learned list of merges, until no listed pair is left. The training data decided that list: frequent pairs got high ranks.
 
 The vocabularies differ in size. `cl100k_base` has 100,277 entries, `o200k_base` 200,019 and DeepSeek V4 129,280, counting special tokens. A bigger vocabulary can hold more whole words from more languages, which is why the move from `cl100k_base` (GPT-4) to `o200k_base` (GPT-4o) cut the count for Chinese, Japanese and Korean text.
+
+Pre-splitting is the part that is easy to miss. A merge list that contains `的` and `天気` cannot join them across a chunk border, because the regular expression already separated the chunks. This is how a tokenizer trained mostly on English can still have short counts for common Chinese words in `o200k_base`: the vocabulary includes whole CJK words, not only bytes. DeepSeek goes further and gives Han characters and kana their own chunk boundaries, so an English word and a Chinese word in the same sentence are counted by different rules.
 
 ## The same sentence, different counts
 
@@ -53,11 +59,40 @@ The gap grows with length. The counter's built-in Chinese sample, a 192-characte
 
 {/* atc: {"text": "你是一名资深后端工程师，正在评审一个合并请求：在 PostgreSQL 分析库前面加一层 Redis 读穿缓存。\n\n所有聚合查询的缓存时间都是 60 秒。作者预计看板接口的 p99 延迟会从 1200 毫秒降到 50 毫秒以下，高峰期每分钟 1.2 万次请求。\n\n请列出两个风险最高的故障场景，判断 60 秒是否适合财务报表看板，并给出合并前应加的一项监控指标。每条不超过 80 字。", "o200k": 133, "cl100k": 172, "deepseek": 111} */}
 
-That is 111, 133 and 172 tokens for one text, a 55% spread. The providers' own rules of thumb hide this. Anthropic's pricing FAQ says a token is about 4 characters or 0.75 words in English; Google's token guide says about 4 characters for Gemini; DeepSeek's documentation says 1 English character is about 0.3 tokens and 1 Chinese character about 0.6. For the 192-character sample, "4 characters per token" predicts 48 tokens, less than half of any real count. Each provider adds that the actual count is what the model returns.
+That is 111, 133 and 172 tokens for one text, a 55% spread. The providers' own rules of thumb hide this. OpenAI's help center says a token is about 4 characters or 0.75 words in English; Google's token guide says about 4 characters for Gemini; DeepSeek's documentation says 1 English character is about 0.3 tokens and 1 Chinese character about 0.6. For the 192-character sample, "4 characters per token" predicts 48 tokens, less than half of any real count. Each provider adds that the actual count is what the model or the API returns.
+
+The direction of the error matters when you budget. For Chinese and Japanese text, the character-based rule underestimates by half or more. For English prose, 4 characters per token is usually close, but code, JSON and tables add punctuation, indentation and repeated short keys, so a 10,000-character file can need more tokens than the estimate suggests. The only reliable answer is the count from the tokenizer that will process the request.
+
+## Why Claude and Gemini have no exact local count
 
 Claude and Gemini are a special case: their tokenizers are not published for local use. Anthropic states that Claude 4.7 and later models use a newer tokenizer that produces about 30% more tokens for the same text than earlier Claude models. So even within one provider, a count from last year's model is not this year's count.
 
-## Tokens set the price and the limits
+The providers expose counting instead of vocabularies:
+
+- Anthropic's `POST /v1/messages/count_tokens` takes the same body as a message request. Its documentation calls the result an estimate and applies its own rate limits.
+- Google's `models.countTokens` does the same for Gemini.
+- OpenAI's `POST /v1/responses/input_tokens` counts a complete request, including formatting tokens for message roles and boundaries, images, files and tool definitions.
+
+That last point is the difference between a text count and a bill. A local tokenizer measures one string. A chat request adds role markers, separators, a system prompt and tool schemas. The provider's endpoint is the only way to include those, and it is the right tool when you need to know whether a request fits.
+
+For GPT-6 the local gap is the same: `tiktoken` 0.14.0 has no entry for it, and OpenAI has not published its tokenizer. The counter marks Claude, Gemini and GPT-6 rows with ≈ and shows the `o200k_base` count as a reference. That reference is useful for comparing prompt sizes, and it is not a bill. A tool that prints an exact GPT-6 count without a published tokenizer is guessing.
+
+## How to read a context limit
+
+A context window is the maximum number of tokens a model can hold in one request. Providers also cap the output per request, and the input limit is the number the counter's context column divides by. Leaving no room for the answer is a common way to turn a valid prompt into a truncation. The column marks a row when the text alone is over the limit; the request will also contain instructions and formatting, so a text that fits exactly is still too large.
+
+| Model | Input limit (tokens) | Where it matters |
+|---|---:|---|
+| gpt-4o | 128,000 | Long documents need chunking earlier than on newer models |
+| gpt-5.4-mini | 272,000 | Same threshold as the long-context price step on gpt-5.5 |
+| gpt-5.5 | 1,050,000 | Above 272,000 input tokens the whole request moves to the higher rate |
+| claude-opus-5-5 | 1,000,000 | No local tokenizer; use `count_tokens` |
+| gemini-3.1-pro-preview | 1,048,576 | Above 200,000 input tokens the whole request moves to the higher rate |
+| text-embedding-3-small | 8,192 | Per input; chunk documents to this size |
+
+The limits above are the input limits printed on each model page and were checked on 2026-10-01. Two practical consequences follow. First, an embedding pipeline chunks by tokens, not characters: at 8,192 tokens per input, a 100,000-character English document may need three or four chunks, and a Chinese document of the same character count may need more. Second, a long-context surcharge applies to the whole request, not only to the tokens above the threshold, which is why a prompt just over 272,000 tokens can cost more than twice as much as one just under it.
+
+## How to read a price table
 
 API prices are per million tokens, separately for input and output:
 
@@ -67,9 +102,36 @@ cost = input_tokens × input_price / 1,000,000 + output_tokens × output_price /
 
 With prices checked on 2026-10-01, the 192-character Chinese sample plus 1,000 output tokens costs $0.030665 on gpt-5.5 ($5 input and $30 output per million, 133 tokens) and $0.0012333 on deepseek-flash at peak rates ($0.30 and $1.20, 111 tokens). Output dominates both: for short prompts, the length of the answer decides the bill.
 
-Two rules change the arithmetic for long prompts. OpenAI prices gpt-5.5 and GPT-6 requests above 272,000 input tokens at 2× input and 1.5× output for the whole request, and Google charges more above 200,000 input tokens on gemini-3.1-pro-preview. And every model has an input limit: 128,000 tokens for gpt-4o, 272,000 for gpt-5.4-mini, 8,192 per input for text-embedding-3-small. When you chunk documents for embeddings, count the chunks with `cl100k_base`, which OpenAI's embeddings guide names for the text-embedding-3 models.
+Three details change the arithmetic:
 
-## Counting tokens from Python and the provider APIs
+- **Long-prompt pricing.** OpenAI prices gpt-5.5 and GPT-6 requests above 272,000 input tokens at 2× input and 1.5× output for the whole request. Google charges more above 200,000 input tokens on gemini-3.1-pro-preview. The counter switches the rate and marks the row.
+- **Off-peak pricing.** DeepSeek charges half the peak rate outside its peak hours. The counter shows both, and the Chinese price page lists CNY rates (deepseek-flash: 2 yuan input, 8 yuan output per million on 2026-10-01).
+- **What is not included.** Batch discounts, prompt caching and negotiated rates are not in the table. A cached input can cost a fraction of the standard rate, so a production bill can be far below this estimate.
+
+Prices and model names change without notice. The date under the table is the check date; re-read the linked provider page before you commit a budget.
+
+## How to estimate without a tokenizer
+
+Sometimes you only have a character count: a CMS field limit, a log line, a draft in an editor. A rough estimate is still possible, if you know which way it errs.
+
+| Text | Practical estimate | Measured result on the sample above |
+|---|---|---:|
+| English prose | 1 token ≈ 4 characters | 22 characters → 7 tokens (3.1 characters per token) |
+| Chinese | 1 character ≈ 0.5–1.0 token | 192 characters → 111–172 tokens |
+| Japanese | 1 character ≈ 0.6–1.0 token | 275 characters → 180–242 tokens |
+| Korean | 1 character ≈ 0.5–1.0 token | 277 characters → 164–231 tokens |
+| JSON, code, logs | count punctuation and keys separately | minify before counting; indentation is tokens too |
+
+The bands are wide on purpose. They come from the measured samples in this guide and from the providers' published ratios, not from a model of the language. Use the lower end for a quick sanity check and the upper end for a limit you must not cross.
+
+For anything that matters, estimate with a margin and then verify:
+
+1. Count characters or words first, with the [Word & Character Counter](/tools/word-counter/). That gives the size of the text and catches truncated pastes.
+2. Count tokens with the [AI Token Counter](/tools/ai-token-counter/) when the model uses `o200k_base`, `cl100k_base` or DeepSeek V4. Those three counts are exact.
+3. For Claude, Gemini and GPT-6, send the full request to the provider's counting endpoint. Do not multiply an English ratio by the character count and call it a budget.
+4. Add room for the system prompt, tool definitions and the answer. If the text is near the context limit, shorten the input rather than the output cap.
+
+## Counting tokens with tiktoken and tokenizers
 
 For OpenAI models, the reference implementation is [tiktoken](https://github.com/openai/tiktoken). Version 0.14.0:
 
@@ -85,14 +147,14 @@ print(tiktoken.encoding_name_for_model("gpt-5.5"))  # o200k_base
 tiktoken.encoding_name_for_model("gpt-6-sol")       # KeyError: Could not automatically map gpt-6-sol ...
 ```
 
-`encoding_for_model()` matches name prefixes, so any `gpt-5…` name maps to `o200k_base`. GPT-6 has no entry: OpenAI has not published its tokenizer, and a tool that shows an exact GPT-6 count is guessing. Use `encode_ordinary()` for user text. Plain `encode()` raises `ValueError` when the text contains `<|endoftext|>`, which happens as soon as someone pastes tokenizer documentation into a prompt.
+`encoding_name_for_model()` matches name prefixes, so any `gpt-5…` name maps to `o200k_base`. GPT-6 has no entry. Use `encode_ordinary()` for user text: plain `encode()` raises `ValueError` when the text contains `<|endoftext|>`, which happens as soon as someone pastes tokenizer documentation into a prompt.
 
 For DeepSeek, the [token usage page](https://api-docs.deepseek.com/quick_start/token_usage) links an offline package with the official `tokenizer.json`. Load it with the `tokenizers` library:
 
 ```python
 from tokenizers import Tokenizer
 
-tok = Tokenizer.from_file("deepseek_v4_tokenizer/tokenizer.json")
+tok = Tokenizer.from_file("tokenizer.json")  # path to the file in the offline package
 enc = tok.encode("什么是 AI 里的 token？")
 print(len(enc.ids), enc.ids)
 # 6 [25043, 7703, 223, 7210, 17840, 1148]
@@ -100,13 +162,18 @@ print(len(enc.ids), enc.ids)
 
 The package's own demo script uses `transformers`. On 2026-10-01, transformers 5.18.0 returned an empty list for Chinese text with this package, while transformers 4.57.6 and `tokenizers` 0.23.2 returned the ids above. Pin transformers 4.x or use `tokenizers` directly.
 
-Claude and Gemini need their APIs. Anthropic's `POST /v1/messages/count_tokens` takes the same body as a message request and is free within its own rate limits; its documentation calls the result an estimate. Gemini's `models.countTokens` does the same for Google. OpenAI also has `POST /v1/responses/input_tokens`, and it is the only way to include what local tokenizers cannot see: OpenAI's token counting guide says the count includes formatting tokens for message roles and boundaries, and covers images, files and tool definitions.
+JavaScript ports have their own traps. js-tiktoken reads the regex shorthand `\s` with JavaScript's rules, which include U+FEFF and exclude U+0085; tiktoken uses Unicode White_Space. Text that starts with a byte-order mark can therefore split differently. Its merge loop is also slow on long unbroken runs: in our test on 2026-10-01, 20,000 Chinese characters with no punctuation took 229 seconds in Node.js. The counter rewrites `\s` and merges with a priority queue, and its test suite compares ids with tiktoken and `tokenizers` on more than 1,500 strings.
 
-## Where local counts go wrong
+## A pre-flight check for long prompts
 
-- **Message overhead.** A local count measures text. A chat request adds role and separator tokens, a system prompt and tool schemas. Compare a local count with the API's `usage` only for the same bare text.
-- **JavaScript ports.** js-tiktoken reads the regex shorthand `\s` with JavaScript's rules, which include U+FEFF and exclude U+0085; tiktoken uses Unicode White_Space. Text that starts with a byte-order mark can split differently. Its merge loop is also quadratic: in our test, 20,000 Chinese characters with no punctuation took 229 seconds in Node.js. The ZeroTool counter rewrites `\s` and merges with a priority queue, and its test suite compares ids with tiktoken and `tokenizers` on more than 1,500 strings.
-- **Fixed ratios.** A count from "characters ÷ 4" was off by more than half for the Chinese sample above. Some online counters use such a ratio for every non-OpenAI model; on 2026-10-01 one showed 14 tokens for a sentence that is 35 tokens in `o200k_base` and 26 in DeepSeek V4.
+The workflow that catches most surprises takes four steps, and only the second one needs a tokenizer:
+
+1. **Shrink the payload before you count it.** JSON with pretty-printing carries spaces, newlines and repeated keys as tokens. Minify it in the [JSON Formatter](/tools/json-formatter/) first; the minified text is what the API will receive if you send it as a string.
+2. **Take only the fields you need.** For a JSON Lines log, `jq` can select and reshape records before counting. The [jq Playground](/tools/jq-playground/) runs the same filters in the browser and shows the output you would paste into the counter.
+3. **Count with the model's tokenizer.** Use the [AI Token Counter](/tools/ai-token-counter/) for `o200k_base`, `cl100k_base` and DeepSeek V4; use the provider endpoint for Claude, Gemini and GPT-6.
+4. **Compare against the limit and the price.** The counter's context column tells you whether the input alone exceeds the model's limit; the cost table tells you what the input and the expected output cost. If the request is close to a threshold, a small edit can move it to a cheaper tier.
+
+Character counting still has a place: it is the fastest way to see whether a paste was truncated, and it is the unit that CMS fields and `maxlength` attributes use. It is a size check, not a token count.
 
 ## Further reading
 
@@ -115,4 +182,4 @@ Claude and Gemini need their APIs. Anthropic's `POST /v1/messages/count_tokens` 
 - Google: [understand and count tokens](https://ai.google.dev/gemini-api/docs/tokens)
 - DeepSeek: [token and token usage](https://api-docs.deepseek.com/quick_start/token_usage) and [models and pricing](https://api-docs.deepseek.com/quick_start/pricing)
 - Sennrich, Haddow and Birch, [Neural Machine Translation of Rare Words with Subword Units](https://aclanthology.org/P16-1162/) (ACL 2016), the BPE paper
-- Related tools: [Word & Character Counter](/tools/word-counter/) for character limits, [Redact API Keys & Secrets](/tools/secret-redactor/) before you paste a prompt anywhere
+- Related tools: [Word & Character Counter](/tools/word-counter/) for character limits, [JSON Formatter](/tools/json-formatter/) to minify a payload, [jq Playground](/tools/jq-playground/) to extract log fields, [Redact API Keys & Secrets](/tools/secret-redactor/) before you paste a prompt anywhere

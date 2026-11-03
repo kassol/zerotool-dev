@@ -1,24 +1,31 @@
 ---
-title: "浏览器里查 DNS：用 DNS-over-HTTPS 查询 A、MX、TXT 和 CAA 记录"
-description: "不用 dig、nslookup 或 whatsmydns，直接在浏览器里查 DNS 记录。DoH 如何让一个 fetch() 调用就拿到 A、AAAA、CNAME、MX、TXT、NS、SOA、CAA、PTR、SRV——附带 DNSSEC、TXT 分段与传播延迟的几个坑。"
+title: "浏览器里查 DNS：DNS-over-HTTPS 完整指南"
+description: "用 DNS-over-HTTPS 在浏览器里查询 A、AAAA、CNAME、MX、TXT、NS、SOA、CAA、PTR 与 SRV 记录，讲清 DNSSEC 的 AD 标志与 EDE、Cloudflare 与 Google 的差异、CORS、ECS、TXT 分段和负缓存。"
 pubDate: 2026-05-24
-updatedDate: 2026-09-30
+updatedDate: 2026-11-03
 lang: "zh"
 noindex: true
 tags: ["dns", "doh", "networking", "tls", "email", "developer-tools"]
 ---
 
-一个常见情形：你把 `marketing.example.com` 的 CNAME 从指向 Webflow 改成指向新的自托管落地页，DNS 控制台显示变更已生效。五分钟后同事说："我电脑上还是旧设计。"你跑 `dig +short marketing.example.com`，拿回的是新 IP。同事的电脑问的是另一个解析器，那个解析器的缓存里可能还是旧记录。谁的缓存错了？
+一个常见情形：你把 `marketing.example.com` 的 CNAME 从指向 Webflow 改成指向新的自托管落地页，DNS 控制台显示变更已生效。五分钟后同事说：「我电脑上还是旧设计。」你跑 `dig +short marketing.example.com`，拿回的是新 IP。同事的电脑问的是另一个解析器，那个解析器的缓存里可能还是旧记录。谁的缓存错了？
 
 [立刻查一下 →](/zh/tools/dns-lookup/)
 
-诚实的答案是"谁的都没错，只是变更还没传到每一个递归解析器而已"——但你没办法靠对一个解析器的一次 `dig` 来证明这一点。你需要快速问几个公共递归解析器并做对比。过去这意味着写 CLI 循环、买商用网络监控工具，或者去多地区查询网站。浏览器帮不上忙：网页打不开 UDP/53 套接字，因此说不了传统的 DNS。RFC 8484 在 2018 年标准化了 DNS-over-HTTPS，Cloudflare 和 Google 随即上线了允许跨域请求的公共 DoH 端点，这件事才有了转机。现在一次 `fetch()` 调用、一个 HTTPS 请求就能查询任意类型的记录，JSON 端点返回的是纯 JSON。
+诚实的答案是「谁的都没错，只是变更还没传到每一个递归解析器」——但你没办法靠对一个解析器的一次 `dig` 证明这一点。你需要快速问几个公共递归解析器并做对比。过去这意味着写 CLI 循环、买商用网络监控工具，或者去多地区查询网站。浏览器帮不上忙：网页打不开 53 端口的 UDP 或 TCP 套接字，说不了传统 DNS。RFC 8484 在 2018 年标准化了 DNS-over-HTTPS，Cloudflare 和 Google 提供了允许跨域请求的公共 DoH 端点，一次 `fetch()` 就能查任意记录类型。
 
-ZeroTool 的 DNS Lookup 就是对这些端点的封装。它就是你自己会写的那个 `fetch()`，外加按类型分组的记录卡片、`dig` 风格的原始视图，以及在你选 **ALL** 时对八种最常被问到的记录类型并发查询。下面是操作指南：DoH 实际是怎么跑的、每种记录类型在实战里告诉你什么，以及五个会咬到任何用错位置去排查 DNS 的人的坑。
+这篇指南覆盖整条链路：DoH 怎样编码查询、每种记录类型回答什么问题、DNSSEC 与扩展错误怎样出现在 JSON 里、Cloudflare 和 Google 差在哪里、CORS 与 ECS 为什么会影响结果，以及哪些结论不能从浏览器查询里得出。带日期的数字都是 [DNS 查询工具](/zh/tools/dns-lookup/)发出的同一条请求的实测结果。
 
-## 一段话讲清 DNS-over-HTTPS
+## DNS-over-HTTPS 改变了什么
 
-传统 DNS 查询是走 UDP/53（截断时回退到 TCP/53）的二进制包。浏览器对这两种协议都没有套接字 API。DoH 的解法是把同样的查询编码成 HTTPS 请求。有两种编码：RFC 8484 二进制（`POST` 携带 `application/dns-message` body，或者 base64url 编码塞进 `GET ?dns=`），以及更早由 Google 首创、Cloudflare 跟进的 JSON 风格（`GET ?name=...&type=...`，返回 JSON）。JSON 风格不在任何 RFC 里。Cloudflare 的文档说它沿用了 Google 的结构，所以两家的字段一致，细节差异见下文：
+传统 DNS 查询是走 UDP 53 端口的二进制报文，响应被截断时回退到 TCP 53（RFC 1035 §4.2）。浏览器对这两种协议都没有套接字 API。DoH 把同一条 DNS 报文装进 HTTPS 请求，查询看起来就是 443 端口上的普通网页流量，链路上是加密的（RFC 8484）。
+
+有两种编码：
+
+- **RFC 8484 的二进制格式。** `POST` 配 `Content-Type: application/dns-message`，或者 `GET` 把报文 base64url 编码后放进 `?dns=`。响应体是 DNS 报文。
+- **JSON 格式。** `GET ?name=…&type=…`，返回 JSON。它不属于任何 RFC；Cloudflare 的文档说沿用了 Google 的结构，字段基本一致，差异见下文。
+
+JSON 格式在网页里更好用：它就是一次普通的跨域 `GET`。2026-11-03 实测，两家端点都返回 `access-control-allow-origin: *`，页面才能读取响应。工具会带 `Accept: application/dns-json`；`Accept` 属于 CORS 安全列表请求头，带它的 `GET` 不触发预检。`POST` 配自定义 `Content-Type`，或带任何非安全列表头，都会触发预检，这也是网页里优先用 JSON 格式的原因之一。
 
 ```json
 {
@@ -36,58 +43,158 @@ ZeroTool 的 DNS Lookup 就是对这些端点的封装。它就是你自己会�
 }
 ```
 
-`Status` 是标准的 DNS RCODE（RFC 1035 §4.1.1，由 RFC 6895 扩展）。`AD` 是 DNSSEC 的 "Authenticated Data" 标志位，两家文档都写明：只有回答里的每条记录都通过验证时才为真。RFC 6840 §5.8 规定解析器只在查询带 DO 或 AD 位时才应置这个位；不带 `do=1` 时 Cloudflare 的 AD 时真时假（见下文）。`TC` 是截断标志；Cloudflare 的文档说，由于它支持最大响应大小，DoH 下这个值几乎总是 false。
+这些字段就是 DNS 报文头和四个区段。`Status` 是 RCODE（RFC 1035 §4.1.1，由 RFC 6895 扩展）：0 是 NOERROR，2 是 SERVFAIL，3 是 NXDOMAIN。`TC` 是截断标志；Cloudflare 的文档说它支持最大响应长度，DoH 下几乎总是 false。`RD` 与 `RA` 描述递归。`AD` 与 `CD` 是 DNSSEC 标志位。`Question`、`Answer`、`Authority`、`Additional` 对应 DNS 的四个区段。`Comment` 放解析器的诊断信息，Google 还提供结构化的 `extended_dns_errors`。
 
-工具发送 `do=1`（DNSSEC OK）和 `cd=0`（Checking Disabled = 0）。`cd=0` 让解析器做 DNSSEC 验证；`do=1` 让它带上签名。不带 `do=1` 时，Cloudflare 的 AD 不可靠：2026-09-30 每种查询各发 30 次，`example.com` 的 A、AAAA、NS 每次都是 `"AD": false`，MX 每次都是 `true`；更早一轮 20 次 A 查询里 `true` 和 `false` 各 10 次。带 `do=1` 的查询和 Google 的查询全部是 `true`。要靠 AD 判断，就要带 `do=1`。反过来，`cd=1` 让解析器跳过验证——对一个坏掉的区域做取证检查时有用，但日常查询不该这么做。
+两家的请求参数不完全一样：
 
-## 十种记录类型，以及它们告诉你什么
+| 参数 | Cloudflare | Google | 含义 |
+|---|---|---|---|
+| `name` | 必填 | 必填 | 查询名；Google 接受 RFC 4343 的反斜杠转义 |
+| `type` | 可选，默认 `A` | 可选，默认 `1` | 记录类型，可写名称或数字 |
+| `do` | `0` / `1` | `0` / `1` | 是否返回 DNSSEC 记录（RRSIG、NSEC、NSEC3） |
+| `cd` | `0` / `1` | `0` / `1` | 是否关闭 DNSSEC 验证 |
+| `ct` | — | `application/dns-message` | 返回二进制 DNS 报文而不是 JSON |
+| `edns_client_subnet` | — | `1.2.3.4/24` | 把客户端子网提示传给权威服务器 |
+| `random_padding` | — | 任意值 | 值被忽略；把 URL 填充到固定长度，降低流量分析风险 |
 
-工具暴露十种类型。每一种都回答一个特定的运维问题。挑错类型，你会花上几个小时去追一个根本不存在的配置错误。
+两家文档都把 `do` 解释为 DNSSEC OK 位，把 `cd` 解释为关闭验证。工具发送 `do=1` 与 `cd=0`：要签名，也让解析器做验证。不带 `do=1` 时 Cloudflare 的 AD 不可靠，见下文 DNSSEC 一节。
+
+## 十种记录类型，以及它们回答什么
+
+每种类型回答一个特定的运维问题。挑错类型，你会花几个小时去追一个根本不存在的配置错误。
 
 | 类型 | 编码 | 提问 | 缺失或错误时常见的运维故障 |
 |---|---:|---|---|
-| `A` | 1 | "哪个 IPv4 地址在服务这个域名？" | 站点在开发者机器上能打开、别人那里 404——旧 A 记录还没换成新 A。 |
-| `AAAA` | 28 | "哪个 IPv6 地址在服务这个域名？" | AAAA 仍指向旧主机时，优先用 IPv6 的客户端打不开网站，而只有 IPv4 的测试环境看不出问题。 |
-| `CNAME` | 5 | "这个别名指向哪个规范名？" | CNAME 指向一个已删除的 Heroku 应用，或者指向某 SaaS 的错误租户。 |
-| `MX` | 15 | "哪些服务器接收这个域名的邮件？" | 所有入站邮件被退回，提示 "no MX record found"，或迁移后投错了服务商。 |
-| `TXT` | 16 | "发布了哪些策略字符串？" | SPF 配成 soft-fail，DMARC 报告显示合法邮件被标垃圾，域名验证一直卡在 "pending"。 |
-| `NS` | 2 | "谁对这个区域有权威？" | 注册商转移后 NS 还指向旧服务商；更新完全不传播。 |
-| `SOA` | 6 | "主服务器是谁，从服务器多久刷新一次？" | 权威区域返回的是过期数据，因为从服务器缓存超出了 SOA 刷新窗口。 |
-| `CAA` | 257 | "哪些 CA 可以为这个域名签发证书？" | 没被列出的 CA 会拒绝签发，换 CA 或 CDN 后续签失败。 |
-| `PTR` | 12 | "这个 IP 声称自己叫什么名字？" | 邮件被退回，因为发送 IP 的 PTR 和 HELO 域名对不上；声誉服务把发件人标黑。 |
-| `SRV` | 33 | "服务 `_xmpp-client._tcp`（等等）在哪里？" | XMPP、SIP、LDAP 或 Matrix 联邦找不到主机，因为 SRV 缺失或端口写错。 |
+| `A` | 1 | 哪个 IPv4 地址在服务这个域名？ | 开发者机器上能打开、别人那里 404——旧 A 与新 A 不一致。 |
+| `AAAA` | 28 | 哪个 IPv6 地址在服务这个域名？ | AAAA 仍指向旧主机时，优先用 IPv6 的客户端打不开网站，只有 IPv4 的测试环境看不出问题。 |
+| `CNAME` | 5 | 这个别名指向哪个规范名？ | CNAME 指向已删除的 Heroku 应用，或指向某 SaaS 的错误租户。 |
+| `MX` | 15 | 哪些服务器接收这个域名的邮件？ | 入站邮件被退回，提示「no MX record found」，或迁移后投错服务商。 |
+| `TXT` | 16 | 发布了哪些策略字符串？ | SPF 配成 soft-fail，DMARC 报告显示合法邮件被标垃圾，域名验证卡在「pending」。 |
+| `NS` | 2 | 谁对这个区域有权威？ | 注册商转移后 NS 还指向旧服务商，更新完全不传播。 |
+| `SOA` | 6 | 主服务器是谁，从服务器多久刷新一次？ | 从服务器超出 SOA 刷新窗口仍返回旧数据，或否定答案被缓存过久。 |
+| `CAA` | 257 | 哪些 CA 可以为这个域名签发证书？ | 没被列出的 CA 拒绝签发，换 CA 或 CDN 后续签失败。 |
+| `PTR` | 12 | 这个 IP 声称自己叫什么名字？ | 发信 IP 的 PTR 与 HELO 域名对不上，邮件被退回，声誉服务标记发件人。 |
+| `SRV` | 33 | `_xmpp-client._tcp` 这类服务在哪里？ | XMPP、SIP、LDAP 或 Matrix 联邦找不到主机，因为 SRV 缺失或端口写错。 |
 
-工具的 **ALL** 模式用 `Promise.all` 对前八种类型并发请求，这是回答最常见运维问题"把这个区域的一切给我看看"的合理默认。PTR 和 SRV 不进 ALL，因为 PTR 要求你输入 in-addr.arpa 形式（比如 `34.216.184.93.in-addr.arpa`）而不是域名，SRV 要求带下划线前缀的特定名（`_xmpp-client._tcp.example.com`）。两者都更适合作为定向的单类型查询，而不是大扫荡的一部分。
+工具的 **ALL** 模式对前八种类型并发请求，适合「把这个区域的一切给我看看」。PTR 与 SRV 不进 ALL：PTR 要求输入 `in-addr.arpa` 形式（如 `34.216.184.93.in-addr.arpa`）而不是域名，SRV 要求带下划线前缀的服务名（`_xmpp-client._tcp.example.com`）。两者都更适合定向的单类型查询。
 
-## 为什么你的 dig 和工具结果对不上
+## A、AAAA 与 CNAME
 
-最常见的意外：开发者笔记本上的 `dig` 和浏览器里的 DoH 对同一个域名给出不同答案。背后有四个无聊的原因和一个有意思的原因。
+`A` 与 `AAAA` 返回地址和 TTL。一个名字可以有多条记录，CDN 会轮换。TTL 是解析器可以缓存这组记录的秒数，不是「变更多久传到所有解析器」的承诺：每个递归解析器从自己拿到记录的那一刻开始倒计时。
 
-**本地递归缓存。** 你的笔记本、路由器或公司转发器会按每条记录的 TTL 缓存 DNS。CNAME 的 TTL 设为 86400（24h）意味着权威服务器上的变更最多要 24 小时才能传到你笔记本。DoH 调用问的是 Cloudflare 或 Google，他们的缓存与你的缓存互相独立。分别用 Cloudflare 和 Google 各查一次、对比答案——如果 Cloudflare 返回新值、Google 返回旧值，你正实时看着传播过程。
+`CNAME` 表示「这个名字是另一个名字的别名」。解析器通常会沿着链继续查，把目标的 `A`/`AAAA` 一起放进 `Answer`，所以一次 CNAME 查询可能返回多种类型。看每条记录的 `name` 字段，才能分清它属于链上的哪一步。
 
-**Split-horizon DNS。** 企业网络、VPN 和 Active Directory 环境通常会跑一个内部权威解析器，对同一个域名返回不同答案。`internal-tools.example.com` 在防火墙内可能解析到 `10.42.0.5`，外网看就是 NXDOMAIN。DoH 调用看到的是外网视角。如果工具对一个你工作机能用的名字返回 NXDOMAIN，那这个区域就是 split-horizon，公共 DNS 根本不知道这个名字的存在。
+两条规则造成大部分 CNAME 意外：
 
-**地理路由的答案。** Cloudflare、Akamai、AWS Global Accelerator 以及大多数 CDN 会根据接收查询的边缘 POP 不同而返回不同的 A/AAAA。工具里看到的 IP 是 Cloudflare 或 Google 递归从*他们*的网络位置看到的，不是你的位置。对"这个 IP 对不对？"这种问题，工具给的是通用公网视角的答案；要问"从我的 POP 看这个 IP 对不对？"，就得从那个 POP 发起查询。
+- **CNAME 节点不能有别的数据。** 有 CNAME 的名字不能再持有其他记录（RFC 1034 §3.6.2、RFC 1912 §2.4）。区域根必须有 SOA 与 NS，因此不能直接是普通 CNAME。
+- **展平会隐藏 CNAME。** Cloudflare 的 CNAME 展平与 Route 53 的别名记录会在查询时用 A/AAAA 回答根域名。对这类根做 DoH 查询，拿到的是地址，不是你在控制台里配的那条 CNAME。这是正确行为，但期待看到别名的人会以为记录丢了。
 
-**EDNS Client Subnet（RFC 7871）。** 一些权威服务器在递归解析器转发客户端子网提示时，能返回更精准的地理路由答案。Google Public DNS 的文档说它"通常会发送大致的网络信息（一般是把 IPv4 地址的最后一段置零）"；Cloudflare 的 FAQ 说 1.1.1.1 不发送 ECS。因此同一个走地理路由的域名经两家查询可能拿到不同 IP，Google 的结果还取决于查询从哪里发出。Google 的 JSON 接口可以用 `edns_client_subnet` 参数自己指定子网（工具不发送该参数）。2026-09-30 用它查 `www.qq.com`：`114.114.114.0/24` 得到 `121.14.77.201`、`121.14.77.221`，`8.8.8.0/24` 得到 `43.159.109.55`，`139.130.4.0/24` 得到 `43.168.224.173`。给 Cloudflare 带同样的参数，它不理会，返回 `43.159.109.55`。
+## MX 与 TXT
 
-**有意思的那个：陈旧的负缓存。** RFC 2308 规定 NXDOMAIN 响应可缓存。不存在的记录没有自己的 TTL，所以负缓存时长取 SOA 记录自身 TTL 与其 MINIMUM 字段中较小的那个（RFC 2308 §5）。如果某个区域被错配了一个小时、你的本地递归缓存了 NXDOMAIN，那么工具能返回正确答案的同时，你的本地查询会一直失败，直到这段时间过去。修法是等——或者在变更区域之前先把 SOA MINIMUM 调低。
+`MX` 记录带优先级和主机名。优先级数字小的先试（RFC 5321 §5.1），相同的值用于分摊负载。如果一个域名完全没有 MX，SMTP 会把它的 A/AAAA 当作优先级 0 的隐式 MX（RFC 5321 §5.1）。所以「没有 MX」不总是等于「不收邮件」。
 
-## 读懂摘要 pill
+**Null MX** 是明确表示「这个域名不收邮件」的写法：一条优先级 0、目标为 `.` 的记录（RFC 7505）。如果你以为要收邮件的域名返回 `0 .`，那是区域所有者主动发布的，要改区域，不是等传播。
 
-记录视图上方有五个 pill，每个都压缩了一个运维信号：
+`TXT` 承载域名本身的 SPF（RFC 7208）、`_dmarc.example.com` 的 DMARC（RFC 7489 §6.1），以及 `选择器._domainkey.example.com` 的 DKIM 公钥（RFC 6376 §3.6.1）。同一个类型还放着搜索引擎和 SaaS 的域名验证串，所以一次 TXT 查询可能返回十几条互不相关的值。
 
-- **NOERROR / NXDOMAIN / SERVFAIL**——RCODE。NOERROR 表示查询被正确处理；可能伴随的零条记录意思是"这个名字存在但没有该类型的记录"。NXDOMAIN 表示这个名字在该区域里根本不存在。SERVFAIL 表示递归解析器没法完成查询——通常是 DNSSEC 验证失败，或权威服务器返回了错误。
-- **N 条记录**——Answer 段的记录数。当 NOERROR 配 0 条记录回来时，说明你挑的类型对这个名字是错的问题。去查这个名字对应区域的 NS。
-- **DNSSEC ✓ / no DNSSEC / DNSSEC failed**——AD 标志位。出现 "no DNSSEC" 表示区域没有签名，或回答里的 CNAME 指向了没签名的区域；签名验证失败时返回的是 SERVFAIL。SERVFAIL 带有 DNSSEC 类扩展错误码（RFC 8914 的 1、2、5–12）时，标签显示 "DNSSEC failed"；其他 SERVFAIL 不显示这个标签，因为解析器没有给出可判断的回答。`com`、`org`、`dev` 这些 TLD 已签名（根区里都有它们的 DS 记录），但其下的域名要所有者自己开启 DNSSEC 才会签名：`example.com` 已签名，`zerotool.dev` 没有。
-- **Resolver**——哪个 DoH 端点回的。在并排对比 Cloudflare 和 Google 时有用。
-- **Latency**——从 `fetch()` 发起到 JSON 解析完成的往返耗时。第一次查询包含与解析器建立 HTTPS 连接的时间，所以比之后的查询慢。
+255 字节规则是最容易把解析器弄坏的部分。一条 TXT 记录由多个 character-string 组成，每段最多 255 字节（RFC 1035 §3.3 与 §3.3.14）。长的 SPF 或 DKIM 值会拆成多段，使用方要把它们直接相连、中间不加任何字符（SPF 见 RFC 7208 §3.3，DKIM 见 RFC 6376 §3.6.2.2）。两家 JSON 接口的呈现方式不同：2026-11-03 实测，Cloudflare 给每段加引号、段间用空格分隔，和 `dig` 的输出一样；Google 把同一把钥匙返回成一整段、没有引号。`cf2024-1._domainkey.zerotool.dev` 的 DKIM 公钥，Cloudflare 返回 425 个字符（第一段 255 个字符后有一处 `" "`），Google 返回 420 个字符。只在确有引号时去掉引号，段与段之间不要插分隔符。
+
+Google 的文档写明 TXT 记录会编码成一个 JSON 字符串，它自己的示例里也带引号分段。实际规则是：把 `data` 当作展示文本，去掉解析器加的引号，再按无分隔符拼接。
+
+## NS、SOA 与否定答案
+
+`NS` 列出区域的权威服务器。它告诉你答案从哪里来，也能看出注册商转移或服务商迁移有没有把委派指错。NS 的 TTL 通常很长（86400 秒很常见），一次变更可能要一天才在所有地方可见。
+
+`SOA` 带区域的主服务器、责任人邮箱、序列号和四个定时器：refresh、retry、expire、minimum（RFC 1035 §3.3.13）。序列号是从服务器发现变更的依据——区域传送出问题时，对比主从的序列号是最快的检查。
+
+minimum 还决定否定缓存。名字不存在时，权威服务器返回 NXDOMAIN，并在 authority 区段带上区域的 SOA。这条否定答案可以缓存 SOA 自身 TTL 与 MINIMUM 中较小的那个秒数（RFC 2308 §5）。缓存了 NXDOMAIN 的解析器会一直返回它，直到计时结束，即使区域已经修好。这是「浏览器查询已经正确、某台笔记本却一直失败」常见的原因之一。
+
+NXDOMAIN 与 NODATA 不同。NXDOMAIN（`Status` 3）表示名字不存在。NODATA 是 NOERROR 但零条回答：名字存在，只是没有所查类型的记录。查一个没有 CAA 的域名得到 NODATA，`Authority` 里有 SOA；查一个拼错的名字得到 NXDOMAIN。看到 NOERROR 配 0 条记录，说明类型选错了——去查你真正想要那个区域的 `NS`。
+
+## CAA
+
+CAA（RFC 8659）告诉公共证书颁发机构，哪些 CA 可以给这个域名签发证书。合规的 CA 在签发前必须检查 CAA。如果存在 CAA 记录、而没有任何 `issue` 属性列出该 CA，这个 CA 就不能签发（RFC 8659 §3）。如果根本不存在 CAA 记录，说明域名没有通过 CAA 限制签发。
+
+允许 Let's Encrypt 和 Google Trust Services 签发、禁止通配符证书的区域：
+
+```text
+example.com. 0 issue "letsencrypt.org"
+example.com. 0 issue "pki.goog"
+example.com. 0 issuewild ";"
+example.com. 0 iodef "mailto:security@example.com"
+```
+
+`issuewild ";"` 拒绝所有通配符签发。`iodef` 告诉 CA：收到未授权签发请求时把报告发到哪里。CAA 是唯一能看出这条限制的 DNS 查询；换到使用其他 CA 的 CDN 时忘了更新，下一次续签就会失败，而且看起来像 TLS 问题。
+
+## PTR 与 SRV
+
+`PTR` 把地址映射回名字。IPv4 的反向名在 `in-addr.arpa` 下，八位组倒过来写（RFC 1035 §3.5）；IPv6 的反向名在 `ip6.arpa` 下，半字节倒过来写（RFC 3596 §2.5）。邮件服务器常检查发信 IP 的 PTR 是否存在、是否与 HELO 名一致，所以缺 PTR 往往表现为投递问题而不是 DNS 问题。只有 PTR 不能证明归属：这个名字还应该正向解析回同一个地址。
+
+`SRV` 在 `_服务._协议.域名` 这类名字下发布主机、端口、优先级和权重（RFC 2782）。支持 SRV 的客户端先试优先级最小的，同优先级按权重分摊。如果没有 SRV，客户端回退到域名上的服务默认端口，所以有些服务没有 SRV 也能用，有些必须要有。
+
+## DNSSEC：AD 标志与 EDE
+
+DNSSEC 给 DNS 数据加签名。做验证的解析器从根信任锚一路验到区域，把结果放进 `AD`（Authenticated Data）标志。RFC 4035 §3.2.3 规定什么时候可以置位；RFC 6840 §5.8 补充：只有查询带了 DO 或 AD 位时才应该置位。工具发送 `do=1` 就是这个原因。
+
+不带 `do=1` 时 Cloudflare 的 AD 会变。2026-09-30 每种查询各发 30 次：`example.com` 的 A、AAAA、NS 每次都是 `"AD": false`，MX 每次都是 `true`；更早一轮 20 次 A 查询里 `true` 和 `false` 各 10 次。带 `do=1` 的查询、以及问 Google 的查询全部是 `true`。要靠 AD 判断，就带 `do=1`。
+
+签名完整、链条有效的区域返回 NOERROR 与 `AD: true`。没签名的区域返回 NOERROR 与 `AD: false`，这不是错误，只说明区域没用 DNSSEC。链条坏掉的区域返回 SERVFAIL，`AD` 为 false，因为没有通过验证的回答。仅凭 SERVFAIL 分不清「DNSSEC 坏了」还是「权威服务器连不上」，要看解析器的诊断。
+
+诊断就是扩展 DNS 错误（RFC 8914），一个数字代码加一段给人看的文字。与 DNSSEC 有关的代码：1（不支持的 DNSKEY 算法）、2（不支持的 DS 摘要类型）、5（不确定）、6（bogus）、7（签名过期）、8（签名尚未生效）、9（缺 DNSKEY）、10（缺 RRSIG）、12（缺 NSEC）。Cloudflare 把它们放在 `Comment` 数组里，形如 `EDE(9): DNSKEY Missing …`。Google 在 `Comment` 里给一句话，另加结构化的 `extended_dns_errors` 数组，含 `info_code` 与 `extra_text`。工具把两家统一显示成记录下方的 `EDE(n): 文本`。
+
+公开的测试域名 `dnssec-failed.org` 可以看这个差别。2026-11-03 实测：Cloudflare 返回 `Status: 2`，`Comment: ["EDE(9): DNSKEY Missing no SEP matching the DS found for dnssec-failed.org."]`；Google 返回 `Status: 2`，`Comment` 以「DNSSEC validation failure」开头，另有 `extended_dns_errors: [{ "info_code": 9, "extra_text": "No DNSKEY matches DS RRs of dnssec-failed.org" }]`。两者是同一个故障：父区发布了 DS 记录，子区没有能对上的 DNSKEY。
+
+`cd=1` 让解析器跳过验证。它适合查看坏区域的未验证数据，不适合日常查询。工具始终发送 `cd=0`；要看另一面就用 `dig +cd`。
+
+## Cloudflare 与 Google 实际差在哪里
+
+两家端点用同一套 JSON 结构，但它们是不同的解析器，网络位置和缓存都不同。实际会遇到的差异：
+
+- **ECS。** Google Public DNS 默认会把大致的网络信息发给权威服务器，通常把 IPv4 地址的最后一段置零；`edns_client_subnet=0.0.0.0/0` 可以关闭。Cloudflare 的 FAQ 说 1.1.1.1 不发送 ECS。所以 CDN 域名经两家查询可能返回不同地址，Google 的结果还取决于查询从哪里发出。2026-09-30 用它查 `www.qq.com`：`114.114.114.0/24` 得到 `121.14.77.201`、`121.14.77.221`，`8.8.8.0/24` 得到 `43.159.109.55`，`139.130.4.0/24` 得到 `43.168.224.173`；Cloudflare 不理会同样的参数，返回 `43.159.109.55`。
+- **TXT 呈现。** Cloudflare 给每段加引号、段间用空格；2026-11-03 实测 Google 返回的是一整段、不带引号。Google 的文档里也有带引号分段的示例，所以把引号当展示格式，不要当接口契约。
+- **诊断信息。** Cloudflare 的 `Comment` 是 EDE 字符串数组；Google 的 `Comment` 是一句话，结构化数据在 `extended_dns_errors` 里。对未缓存的回答，Google 还会加 `Comment: "Response from <IP>."`，说明它问的是哪台权威服务器。
+- **DNSSEC 记录的文本。** 带 `do=1` 时两家都把 RRSIG 放进 `Answer`。文本不是逐字节相同：2026-11-03 的查询里，Google 把覆盖的类型写成小写（`a 13 2 …`），Cloudflare 写成大写（`A 13 2 …`）。
+- **顺序与名字。** RRset 本身无序，两家返回的顺序不同。不要按位置比较两份答案，要比较集合。
+- **HTTP 缓存。** 同一次查询里，Google 的响应带 `cache-control: private, max-age=300`，Cloudflare 的没有。重复查询可能由浏览器或中间缓存直接回答，最多五分钟。
+
+TTL 不同也是正常的：两个缓存从不同时间开始计时，不代表谁错了。
+
+## 为什么浏览器和系统解析器结果不同
+
+DoH 查询回答的是和笔记本上的 `dig` 不同的问题。差异不是 bug：
+
+- **观测点。** `dig` 问的是操作系统配置的解析器（或你指定的服务器）；DoH 问的是 Cloudflare 或 Google。两者缓存独立，一个可能还是旧记录，另一个已经是新的。
+- **hosts 文件与本地覆盖。** `dig`、`nslookup` 发的是 DNS 查询，通常不读 `/etc/hosts`；普通应用查询会经系统解析器读它，VPN 或本地 DNS 代理也可能改写答案。公共 DoH 解析器看不到这些。
+- **分离解析（split-horizon）。** 公司网络和 VPN 对内网返回内部地址，对外返回 NXDOMAIN。DoH 看的是外网视角，所以办公室里能用的内网名字在这里是 NXDOMAIN。
+- **搜索域。** 系统可能给裸主机名补上搜索后缀；DoH 端点要求完整名字。
+- **浏览器的安全 DNS。** Chrome、Edge、Firefox 可以给自己的解析配置 DoH，包括解析 `cloudflare-dns.com` 或 `dns.google` 本身。它改变的是浏览器解析主机名走哪条路，不改变 DoH 请求里问的那个解析器。
+- **先有鸡还是先有蛋。** 页面要先经正常网络路径解析出 `cloudflare-dns.com` 或 `dns.google`，才能发出 DoH 查询。内容过滤器或强制门户挡住这两个名字时，查询本身是加密的也没用。
+
+这也解释了为什么 Pi-hole、NextDNS、AdGuard Home 这类过滤器会让工具既有用又误导：工具能看到公共答案（本地过滤器挡了它），但你的网络确实屏蔽了这个域名。同理，拦截 53 端口、用 fake-IP 模式的代理会让 `dig` 打出 `198.18.2.147` 这类基准测试网段地址（RFC 6890 §2.2.2），而 DoH 查询返回真实结果。
+
+## 常见的误判
+
+**「还在传播。」** 多半是缓存，TTL 会告诉你要等多久。看记录上的 TTL，再问第二个解析器；一个拿到新值、另一个还是旧值，你看到的是缓存过期，不是坏区域。
+
+**「DNS 坏了，只有一台机器不行。」** 先查是不是早先配错时缓存了 NXDOMAIN。RFC 2308 §5 允许按 SOA minimum 缓存否定答案；修法是等，或者在变更前先调低 SOA minimum。
+
+**「CDN 返回了错误的 IP。」** DoH 的答案反映解析器的网络位置，不是你的。Google 的 ECS 提示会让答案靠近你指定的子网，Cloudflare 不发。要问「圣保罗的用户看到什么」，就从那个区域查。
+
+**「网站能打开，DNSSEC 没问题。」** 做验证的解析器可能失败，不做验证的照常成功。带 EDE 代码的 SERVFAIL 是验证失败的标志；没有 EDE 的 SERVFAIL 更像权威服务器连不上。
+
+**「CNAME 不见了。」** 解析器沿着链查完，返回的是 A/AAAA；或者区域在根上用了展平。查别名本身，并读每条答案的 `name` 字段。
+
+**「TXT 被截断了。」** 那是多段 255 字节的字符串。去掉引号，按无分隔符拼接。
+
+**「没有 MX，邮件一定收不到。」** SMTP 会退回到域名 A/AAAA 上的隐式 MX（RFC 5321 §5.1）。Null MX（`0 .`）才是明确的「不收邮件」。
+
+**「没有 CAA 记录，所以谁都签不了。」** 正好相反：没有 CAA 记录表示没有 CAA 限制。CAA 记录里漏掉某个 CA，才是挡住那个 CA。
 
 ## 自己写同样的查询
 
-工具存在的理由是：一次性查询点几下比写脚本快。要做自动化，DoH JSON 风格短到能塞进任何带 `fetch` 的语言。下面是三种参考实现，各自适合不同场景。
+工具存在的理由是：一次性查询点几下比写脚本快。要做自动化，JSON 格式短到能塞进任何有 `fetch` 的语言。
 
-浏览器 / Node 18+ 版本拿到域名后只需两行：
+浏览器或 Node 18+：
 
 ```js
 const url = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent('zerotool.dev')}&type=MX&do=1&cd=0`;
@@ -96,9 +203,9 @@ const json = await res.json();
 console.log(json.Answer); // [{ name, type, TTL, data }, ...]
 ```
 
-要超时就加 `AbortSignal.timeout(5000)`，网络可能挂就包一层 `try/catch`。Cloudflare 和 Google DoH 返回的 JSON 结构跟上面一致，换提供商只需要换 URL。
+要超时加 `AbortSignal.timeout(5000)`，网络可能失败就包一层 `try/catch`。两家返回的整体结构一致，换提供商主要是换 URL 和各自的参数。
 
-Python 版用 `httpx` 或 `urllib`。仅用标准库的实现：
+Python 标准库版本：
 
 ```python
 import json
@@ -118,95 +225,44 @@ def doh(name: str, qtype: str, resolver: str = "cloudflare"):
 print(doh("zerotool.dev", "CAA"))
 ```
 
-Shell 脚本和 CI 步骤里，`curl` 配 `jq` 是经典组合。下面这一行按优先级拉出一个域名的全部 MX 目标：
+Shell 与 CI 里用 `curl` 配 `jq`：
 
 ```bash
 curl -s -H 'accept: application/dns-json' \
   'https://cloudflare-dns.com/dns-query?name=cloudflare.com&type=MX' \
-  | jq -r '.Answer[] | "\(.data)"' | sort
+  | jq -r '.Answer[] | select(.type == 15) | "\(.data)"' | sort
 ```
 
-外面套个 `for` 循环，你就有了自己的传播跟踪器，连终端都不用离开。把它包成 Bash 函数丢进 `~/.bashrc`，你就用它替掉了 `dig` 一半的临时活儿。
+带 `do=1` 时 `select(.type == 15)` 很重要：回答里还有 RRSIG 记录，直接遍历 `.[]` 会把它们也打出来。
 
-## TXT 分段——255 字节规则
+## 在 DNS 查询工具中的位置
 
-长的 SPF、DKIM、DMARC 记录经常会突破 RFC 1035 §3.3.14 给 TXT 内单个字符串规定的 255 字节上限。DNS 协议允许一条 TXT 记录里有多个字符串；SPF 的约定（RFC 7208 §3.3）是把它们无分隔符地拼起来，作为逻辑记录。两家 JSON 接口的呈现方式不同：Cloudflare 给每段加引号、段间用空格分隔，和 dig 的输出一样；Google 把各段拼成一个值，不加引号。Cloudflare 的形式：
+[DNS Checker](https://dnschecker.org/) 从自己的服务器向「分布在全球多个地区的一组 DNS 服务器」查询，并画传播地图。它回答「这次变更是不是每个地区都收到了」。
 
-```json
-{
-  "name": "google.com",
-  "type": 16,
-  "TTL": 300,
-  "data": "\"v=spf1 include:_spf.google.com ~all\""
-}
-```
+[Google Admin Toolbox Dig](https://toolbox.googleapps.com/apps/dig/) 把查询发给自己的后端（`/apps/dig/lookup`）。2026-09-29 测试时，它对 `dnssec-failed.org` 显示「Record not found!」，只有原始视图里有 `rcode SERVFAIL`；对已签名的 `example.com`，标志行是 `QR RD RA`，没有 AD。
 
-更长的记录会得到两段相邻字符串：
+`dig` 与 `kdig` 是 CLI 参考实现，做脚本和需要指定权威服务器的查询（`dig @ns1.example.com`）时它们是对的答案。
 
-```json
-{
-  "data": "\"v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@example.com; \" \"fo=1; aspf=r; adkim=r\""
-}
-```
-
-工具按解析器返回的原样显示。要从 Cloudflare 的形式得到逻辑值，去掉外层引号以及段间的"引号-空格-引号"（`" "`）；SPF（RFC 7208 §3.3）和 DKIM（RFC 6376 §3.6.2.2）都规定各段直接相连、中间不加任何字符。Google 的形式已经拼好。以 `cf2024-1._domainkey.zerotool.dev` 的 DKIM 公钥为例，Cloudflare 返回 425 个字符，第一段 255 个字符之后有一处 `" "`；Google 返回的同一公钥是 420 个字符。
-
-## CAA——唯一能搞挂 TLS 签发的记录
-
-CAA（RFC 8659）告诉公共证书颁发机构（CA），哪些 CA 被允许给某个域名签发证书。合规的 CA 签发前必须检查 CAA，没被任何 `issue` 记录列出的 CA 不得签发（RFC 8659 §3）。换到使用其他 CA 的 CDN 或 CA 时忘了更新 CAA，下次证书续签就会失败——这种限制从其他 DNS 查询里根本看不出来，只有 CAA 查询能告诉你它在那里。
-
-一个允许 Let's Encrypt 和 Google Trust Services（`pki.goog`）签发、禁止通配符证书的区域配置长这样：
-
-```text
-example.com. 0 issue "letsencrypt.org"
-example.com. 0 issue "pki.goog"
-example.com. 0 issuewild ";"
-example.com. 0 iodef "mailto:security@example.com"
-```
-
-`issuewild ";"` 禁掉所有通配符签发。`iodef` 告诉 CA：收到未授权的签发请求时把报告发到哪里。工具的 CAA 查询会按 tag（`issue`、`issuewild`、`iodef`）和值列出每条记录，方便你在触发签发前确认策略。
-
-## 坑点
-
-**优先级 0、目标为 `.` 的 MX。** RFC 7505 定义了 "Null MX" 记录——`0 .`——意思是"这个域名彻底不收邮件"。如果工具对一个你以为能收邮件的域名返回 `0 .`，那是注册商或 DNS 服务商显式发布了这个占位记录。要改就得编辑区域文件，不是等传播。
-
-**根域（apex）上的 CNAME 是非法的。** 有 CNAME 的名称不能再有其他记录（RFC 1034 §3.6.2、RFC 1912 §2.4），而区域根（`example.com`）必须有 SOA 和 NS。Cloudflare（CNAME 展平）和 Route 53（别名记录）提供看着像根上 CNAME 的记录，查询时按 A/AAAA 回答。对这类区域的根做 DoH 查询，拿到的是展平后的 A/AAAA，而不是 CNAME。这是正确行为，但会让期待看到控制台里那条 CNAME 的人困惑。
-
-**私有解析器与 Pi-hole。** 运行 Pi-hole、NextDNS、AdGuard Home 或任何基于 DNS 的内容过滤的网络上，浏览器和系统的普通查询都会经过这个过滤器，可能被改写或屏蔽。工具的查询通过 HTTPS 发给公共解析器，过滤器看不到你查的域名；不过浏览器仍要经本地 DNS 解析 `cloudflare-dns.com` 或 `dns.google` 本身，过滤器可以屏蔽这两个名称。这也是为什么在你笔记本普通查询失败时工具还能给出真实答案。它有时有帮助（排查配错的 Pi-hole 规则），有时会误导（工具说域名正常，但你的网络屏蔽了它）。
-
-**EDNS Client Subnet 与 CDN 测试。** 测 CDN 的地理路由时，DoH 返回的 IP 反映的是 Cloudflare 或 Google 的视角，不是你的。要测特定区域，用 DNS Checker 这类多地区查询工具，或者在那个区域的云上虚机里跑 `dig`。ZeroTool 的工具回答的是"这个公共解析器返回什么？"，不是"我在圣保罗的用户会看到什么？"。
-
-**DNSSEC 失败看起来像服务器故障。** 如果某个区域 DNSSEC 链签错了，Cloudflare 和 Google 都会返回 SERVFAIL 加 `AD=false`，和解析器完全联系不上区域时的响应码相同。记录下方的解析器备注能区分两者：查 `dnssec-failed.org` 时，Cloudflare 的备注是 `EDE(9): DNSKEY Missing ...`（RFC 8914 扩展错误码 9）。Google 返回以 "DNSSEC validation failure" 开头的一句说明，外加 `extended_dns_errors` 字段（错误码 9），工具把后者显示为 `EDE(9): No DNSKEY matches DS RRs of dnssec-failed.org`。两家的标签都显示 "DNSSEC failed"。工具始终发送 `cd=0`，这是日常查询的正确默认；想看未经验证的答案用 `dig +cd`，要完整分析签名链用 DNSViz。
-
-## 在 DNS 查询工具家族中的定位
-
-下面每个工具回答的是不同的问题。
-
-[DNS Checker](https://dnschecker.org/) 从自己的服务器向"分布在全球多个地区的一组 DNS 服务器"查询记录，并画出传播地图。它回答的是"这次变更是不是每个地区都收到了？"。
-
-[Google Admin Toolbox Dig](https://toolbox.googleapps.com/apps/dig/) 把查询发给自己的后端（`/apps/dig/lookup`）。2026-09-29 测试时，它对 `dnssec-failed.org` 显示 "Record not found!"，只有原始视图里有 `rcode SERVFAIL`；对已签名的 `example.com`，标志行是 `QR RD RA`，没有 AD。
-
-
-
-`dig` 和 `kdig` 是 CLI 参考实现，做脚本和需要指定权威服务器的查询（`dig @ns1.example.com`）时它们是对的答案。
-
-ZeroTool 的工具填的是中间那一块：开发者想在浏览器里快速查一下，机器上装 `dig` 还得加个 Homebrew 包或者上 WSL，又想看公共解析器自己的回答，而不是经查询网站服务器转手的结果。你可以在 Cloudflare 和 Google 之间切换对比，看到 AD 标志和解析器备注，并复制原始 JSON。它不是做传播地图或纯权威查询的工具；那些场景，上面提到的工具更合适。
+ZeroTool 的工具填中间那一块：想在浏览器里快速查一下，机器上装 `dig` 还得加 Homebrew 包或者上 WSL，又想看公共解析器自己的回答，而不是经查询网站服务器转手的结果。可以在 Cloudflare 和 Google 之间切换对比，看到 AD 标志和解析器备注，并复制原始 JSON。它不是做传播地图或纯权威查询的工具。
 
 ## 延伸阅读
 
 站内：
 
 - [HTTP Header Analyzer](/zh/tools/http-header-analyzer/)——DNS 解析完成之后，服务器返回了什么。
-- [SSL Certificate Decoder](/zh/tools/ssl-certificate-decoder/)——确认解析到的 IP 上服务的证书跟主机名匹配。
-- [URL Parser](/zh/tools/url-parser/)——在解析主机之前把 URL 拆成协议、主机、端口、路径、查询串。
-- [IP Subnet Calculator](/zh/tools/ip-subnet-calculator/)——拿到 A/AAAA 之后，推导防火墙规则用的子网结构。
+- [SSL Certificate Decoder](/zh/tools/ssl-certificate-decoder/)——确认解析到的 IP 上服务的证书与主机名匹配。
+- [URL Parser](/zh/tools/url-parser/)——在解析主机之前把 URL 拆成协议、主机、端口、路径与查询串。
+- [IP 子网计算器](/zh/tools/ip-subnet-calculator/)——拿到 A/AAAA 之后，推导防火墙规则用的子网结构。
 
 站外：
 
 - [RFC 8484 — DNS Queries over HTTPS](https://www.rfc-editor.org/rfc/rfc8484)——DoH 标准。
-- [Cloudflare DoH 文档](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/)——端点、参数、JSON 风格。
-- [Google Public DNS DoH](https://developers.google.com/speed/public-dns/docs/doh)——Google 关于 `dns.google/resolve` 的文档。
-- [RFC 1035 — Domain Names](https://www.rfc-editor.org/rfc/rfc1035)——原始 DNS 规范；记录格式参考首选。
-- [RFC 7208 — Sender Policy Framework](https://www.rfc-editor.org/rfc/rfc7208)——SPF，附 TXT 分段规则。
+- [Cloudflare DoH JSON 文档](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/)——参数与响应字段，2026-05-05 更新。
+- [Google Public DNS JSON API](https://developers.google.com/speed/public-dns/docs/doh/json)——参数、`extended_dns_errors` 与 `Comment`。
+- [RFC 1035 — Domain Names](https://www.rfc-editor.org/rfc/rfc1035)——原始 DNS 规范与记录格式。
+- [RFC 2308 — Negative Caching of DNS Queries](https://www.rfc-editor.org/rfc/rfc2308)——SOA minimum 规则。
+- [RFC 6840 §5.8](https://www.rfc-editor.org/rfc/rfc6840#section-5.8)——解析器什么时候可以置 AD。
+- [RFC 8914 — Extended DNS Errors](https://www.rfc-editor.org/rfc/rfc8914)——EDE 代码。
+- [RFC 7208 — Sender Policy Framework](https://www.rfc-editor.org/rfc/rfc7208)——SPF 与 TXT 分段拼接。
 - [RFC 8659 — CAA](https://www.rfc-editor.org/rfc/rfc8659)——Certification Authority Authorization。
-- [RFC 6891 — EDNS(0)](https://www.rfc-editor.org/rfc/rfc6891)——EDNS Client Subnet 依赖的扩展机制。
+- [RFC 6891 — EDNS(0)](https://www.rfc-editor.org/rfc/rfc6891)——ECS 所依赖的扩展机制。

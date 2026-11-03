@@ -1,180 +1,192 @@
 ---
-title: "TOTP·2FA 완전 가이드: 시간 기반 일회용 비밀번호의 원리와 구현"
-description: "TOTP와 RFC 6238의 작동 원리를 설명합니다. 테스트 코드 온라인 생성, HMAC+타임스텝 원리, Node.js/Python/Go TOTP 구현 방법까지 안내합니다."
+title: "TOTP·2FA 완전 가이드: 시간 기반 일회용 비밀번호의 원리와 검증"
+description: "RFC 6238 테스트 벡터로 TOTP 코드를 단계별로 계산하고, otpauth:// URI와 인증 앱 설정, 서버의 시간 창·재사용 거부·시도 제한을 정리합니다."
 pubDate: 2026-04-07
-updatedDate: 2026-09-30
+updatedDate: 2026-11-03
 lang: "ko"
 noindex: true
-tags: ["totp", "2fa", "otp", "authentication", "security", "rfc6238", "developer-tools"]
+tags: ["totp", "2fa", "otp", "authentication", "security", "rfc6238"]
 ---
 
-이중 인증(2FA)은 계정을 보호하기 위한 표준 방법이 되었습니다. 가장 일반적인 2FA 메커니즘, 즉 인증 앱에 표시되는 여섯 자리 코드는 TOTP(시간 기반 일회용 비밀번호)로 정의됩니다. 이 가이드는 TOTP의 내부 동작, 애플리케이션 구현 방법, 인증 앱 없이 테스트 코드를 생성하는 방법을 설명합니다.
+인증 앱이 30초마다 바꾸는 6자리 코드는 TOTP(Time-Based One-Time Password, 시간 기반 일회용 비밀번호)로 만들어지며 [RFC 6238](https://www.rfc-editor.org/rfc/rfc6238)에 정의되어 있습니다. 서비스와 앱은 같은 시크릿을 미리 공유하고, 이후 각자 "시크릿 + 현재 시각"으로 같은 계산을 합니다. 키와 시계가 맞으면 통신하지 않아도 같은 숫자가 나옵니다.
 
-## TOTP란
+이 글은 RFC의 테스트 값으로 코드 하나를 끝까지 계산한 뒤, QR 코드에 들어가는 `otpauth://` URI, 인증 앱이 실제로 읽는 설정, 서버가 지켜야 할 규칙을 봅니다. 모든 숫자는 [TOTP 생성기](/ko/tools/totp-generator/)나 몇 줄의 Node.js로 재현할 수 있습니다.
 
-TOTP(Time-Based One-Time Password)는 [RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238)에 정의되어 있습니다. 짧은 숫자 코드(일반적으로 6자리)를 생성합니다:
+## 코드 하나를 단계별로 계산하기
 
-- 30초마다 변경됨
-- 한 번만 허용: 같은 코드의 두 번째 사용은 서버가 거부해야 함([RFC 6238 §5.2](https://datatracker.ietf.org/doc/html/rfc6238#section-5.2))
-- 서버와 인증 앱 모두가 알고 있는 공유 시크릿이 필요
+TOTP는 [RFC 4226](https://www.rfc-editor.org/rfc/rfc4226)의 HOTP에 시간에서 구한 카운터를 넣은 것입니다. RFC 6238의 테스트 키는 ASCII 문자열 `12345678901234567890`(20바이트)이고 Base32로는 `GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ`입니다. 테스트 표의 첫 줄인 Unix 시각 59초로 계산합니다.
 
-알고리즘은 결정론적입니다. 같은 시크릿과 같은 타임 윈도우라면 항상 같은 코드가 생성됩니다. 각 코드는 30초 윈도우 안에서만 유효하지만, 그것만으로는 재전송을 막지 못합니다. 서버는 마지막으로 받아들인 타임스텝을 기억해 같은 코드의 재제출을 거부해야 합니다.
-
-## TOTP의 작동 원리: 수학적 원리
-
-TOTP는 HOTP(HMAC 기반 일회용 비밀번호, RFC 4226)를 기반으로 구축됩니다. 핵심 알고리즘:
+**1. 시간 단계.** 주기 X = 30초, 시작 T0 = 0([RFC 6238 §4.2](https://www.rfc-editor.org/rfc/rfc6238#section-4.2))이므로:
 
 ```
-T = floor(current_unix_time / 30)    # 타임 카운터
-TOTP = HOTP(secret, T)
-HOTP = Truncate(HMAC-SHA1(secret, T))
+T = floor((59 - 0) / 30) = 1
 ```
 
-단계별 설명:
+T는 8바이트 빅엔디언 정수 `00 00 00 00 00 00 00 01`로 씁니다.
 
-1. **타임 카운터**: 현재 Unix 타임스탬프를 타임스텝(기본 30초)으로 나눕니다. `floor(1712500000 / 30) = 57083333`
-
-2. **HMAC**: 시크릿 키와 타임 카운터로 HMAC-SHA1을 계산합니다. 20바이트 해시가 생성됩니다.
-
-3. **동적 잘라내기**: 해시의 마지막 바이트를 가져옵니다. 하위 4비트가 오프셋을 결정합니다. 해당 오프셋에서 4바이트를 추출하고 최상위 비트를 마스킹하여 31비트 정수를 얻습니다.
-
-4. **나머지 연산**: `정수 mod 10^6`(6자리의 경우)을 계산하여 최종 OTP를 얻습니다.
-
-결과는 6자리 코드입니다. 서버는 같은 계산을 수행하고 코드가 일치하면 수락합니다. RFC 6238 [5.2절](https://www.rfc-editor.org/rfc/rfc6238#section-5.2)은 네트워크 지연으로 최대 한 타임스텝까지 더 허용하도록 권장하며, 라이브러리 기본값은 제각각입니다(pyotp의 `verify()`는 `valid_window=0`으로 현재 타임스텝만 허용).
-
-## 공유 시크릿
-
-시크릿은 base32로 인코딩된 랜덤 값으로, 일반적으로 160비트(20바이트)입니다. 인증 앱에서 QR 코드를 스캔하면 QR 코드에는 다음과 같은 URI가 포함됩니다:
+**2. HMAC.** 이 8바이트를 메시지로, 키를 키로 HMAC-SHA-1을 계산하면 20바이트가 나옵니다.
 
 ```
-otpauth://totp/Service:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Service&algorithm=SHA1&digits=6&period=30
+75a48a19d4cbe100644e8ac1397eea747a2d33ab
 ```
 
-`secret` 파라미터가 base32 인코딩된 공유 시크릿입니다. 앱은 2FA 등록 시 한 번 생성하여 (암호화하여) 데이터베이스에 저장합니다. 사용자는 인증 앱(Google Authenticator, Authy, 1Password 등)에 저장합니다.
+[RFC 4226 부록 D](https://www.rfc-editor.org/rfc/rfc4226#appendix-D) 표 1의 count 1 행과 같은 값입니다.
 
-**시크릿은 기밀 정보입니다.** 시크릿을 가진 사람은 누구든지 해당 계정의 유효한 코드를 생성할 수 있습니다.
+**3. 동적 절단.** 마지막 바이트 `ab`의 하위 4비트는 `b`, 즉 11입니다. 11번째 바이트부터 4바이트 `c1 39 7e ea`를 읽고 최상위 비트를 지우면 `0x41397eea` = 1094287082입니다([RFC 4226 §5.3](https://www.rfc-editor.org/rfc/rfc4226#section-5.3)).
 
-## 온라인에서 TOTP 테스트 코드 생성하기
+**4. 자릿수 맞추기.** 10의 자릿수 제곱으로 나눈 나머지를 구하고, 모자라는 앞자리는 0으로 채웁니다.
 
-**[ZeroTool TOTP 생성기 사용해보기 →](/ko/tools/totp-generator/)**
+```
+1094287082 mod 10^8 = 94287082
+1094287082 mod 10^6 =   287082
+```
 
-base32 시크릿을 입력하거나 otpauth:// URI를 붙여 넣으면 현재 TOTP 코드를 바로 볼 수 있고, 고정 Unix 시각을 넣어 RFC 테스트 벡터를 재현할 수도 있습니다. 다음 용도에 유용합니다:
-- 개발 중 2FA 구현 테스트
-- 시크릿이 올바르게 설정되었는지 확인
-- 시간 동기화 문제 디버깅
-
-계산은 브라우저에서 실행되며, 시크릿은 저장하지 않고 URL에도 넣지 않습니다.
-
-## 애플리케이션에 TOTP 구현하기
-
-### 등록 플로우
-
-1. 랜덤 20바이트 시크릿 생성
-2. base32로 인코딩
-3. 서비스 이름과 사용자 식별자가 포함된 `otpauth://` URI 구성
-4. QR 코드로 표시하여 사용자가 스캔할 수 있게 함
-5. 현재 코드를 입력받아 등록 확인
-6. 시크릿을 (암호화하여) 데이터베이스에 저장
-
-### Node.js 구현
+`94287082`는 [RFC 6238 부록 B](https://www.rfc-editor.org/rfc/rfc6238#appendix-B)의 59초 SHA-1 값이고, `287082`는 RFC 4226 count 1의 6자리 값입니다. 2단계와 3단계를 Node.js로 확인하면 다음과 같습니다.
 
 ```js
-import { generateSecret, generateURI, verify } from 'otplib'; // otplib v13
-
-// 등록
-const secret = generateSecret(); // 예: "JBSWY3DPEHPK3PXP"
-const otpauthUrl = generateURI({ issuer: 'MyApp', label: 'user@example.com', secret });
-
-// QR 코드 생성(qrcode 라이브러리 사용)
-import qrcode from 'qrcode';
-const qrDataUrl = await qrcode.toDataURL(otpauthUrl);
-
-// 검증(로그인 시)
-const { valid } = await verify({ secret, token: userCode });
+const { createHmac } = require('node:crypto');
+const msg = Buffer.alloc(8); msg.writeBigUInt64BE(1n);
+const h = createHmac('sha1', '12345678901234567890').update(msg).digest();
+const o = h[19] & 15;                       // 11
+const bin = h.readUInt32BE(o) & 0x7fffffff; // 1094287082
+console.log(String(bin % 1e8).padStart(8, '0')); // 94287082
 ```
 
-### Python 구현
+TOTP 생성기에서 Base32 키를 붙여 넣고 자릿수를 8로, **Unix 시각**에 `59`를 넣으면 현재 코드 `94287082`, 이전(T = 0) `84755224`, 다음(T = 2) `37359152`가 표시됩니다.
+
+## 테스트 벡터와 시드 길이
+
+RFC 6238의 테스트 표는 6개 시각 × SHA-1·SHA-256·SHA-512, 모두 18개 값입니다. 일부만 옮기면:
+
+| Unix 시각 | T(16진) | SHA-1 | SHA-256 | SHA-512 |
+|---|---|---|---|---|
+| 59 | 0000000000000001 | 94287082 | 46119246 | 90693936 |
+| 1111111109 | 00000000023523EC | 07081804 | 68084774 | 25091201 |
+| 20000000000 | 0000000027BC86AA | 65353130 | 77737706 | 47863826 |
+
+표 위의 본문에는 20바이트 키만 나오지만, 부록 A의 Java 참조 코드는 SHA-256에 32바이트 키(`12345678901234567890123456789012`), SHA-512에 64바이트 키(같은 숫자를 64자까지 반복)를 씁니다. SHA-256과 SHA-512 열은 이 긴 키로만 맞기 때문에, 20바이트 키로 직접 구현해 보고 "값이 다르다"고 멈추는 일이 생깁니다. Base32로는 다음과 같습니다.
+
+```
+SHA-256: GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA====
+SHA-512: GEZDGNBVGY3TQOJQ 6회 반복 뒤 GEZDGNA=
+```
+
+키 길이를 HMAC 출력과 같게 두라는 [RFC 6238 §5.1](https://www.rfc-editor.org/rfc/rfc6238#section-5.1)의 권고와도 맞습니다. 마지막 행의 20000000000초는 2603년입니다. §4.2는 2038년 이후 32비트 정수를 넘는 시각을 지원해야 한다(MUST)고 정하며, 이 행이 그 확인용입니다.
+
+## 시크릿과 otpauth:// URI
+
+시크릿은 무작위 바이트이고, 사용자에게는 Base32([RFC 4648 §6](https://www.rfc-editor.org/rfc/rfc4648#section-6), A–Z와 2–7)로 보여 줍니다. [RFC 4226 §4](https://www.rfc-editor.org/rfc/rfc4226#section-4)는 최소 128비트, 권장 160비트를 요구합니다. Base32에는 0, 1, 8, 9가 없으므로 이 글자가 들어간 키는 잘못 옮긴 것입니다.
+
+앱은 Google의 [Key Uri Format](https://github.com/google/google-authenticator/wiki/Key-Uri-Format)에 따른 URI를 QR 코드로 받습니다.
+
+```
+otpauth://totp/Example:alice@google.com?secret=JBSWY3DPEHPK3PXP&issuer=Example
+```
+
+- 라벨은 `발급자:계정`입니다. 두 부분 모두 `:`를 포함할 수 없고, 공백은 `%20`으로 씁니다. 한글은 UTF-8로 퍼센트 인코딩합니다.
+- `secret`은 `=` 패딩을 뺀 Base32입니다.
+- `issuer`는 라벨의 발급자와 같은 값을 씁니다. 최신 앱은 파라미터를, 오래된 앱은 라벨 접두사를 읽습니다.
+- `algorithm`(SHA1, SHA256, SHA512), `digits`(6 또는 8), `period`(기본 30)는 생략할 수 있습니다.
+
+같은 문서에는 Google Authenticator 구현이 `algorithm`과 `period`를 무시하고, Android와 BlackBerry에서는 `digits`도 무시한다고 적혀 있습니다. SHA-256이나 60초 주기로 등록하면 Google Authenticator가 계산한 코드가 한 번도 맞지 않을 수 있습니다. 다른 앱은 제품과 버전에 따라 다르므로, 실제로 지원할 앱에서 `algorithm=SHA256&digits=8&period=60` URI를 만들어 스캔하고 같은 주기의 코드를 비교하세요. 앱을 고를 수 없다면 SHA-1, 6자리, 30초를 유지합니다. SHA-1은 여기서 약점이 아닙니다. 알려진 SHA-1 충돌 공격은 HMAC-SHA1을 깨지 못합니다([RFC 6194 §3.3](https://www.rfc-editor.org/rfc/rfc6194#section-3.3)).
+
+pyotp 2.10.0은 위 예시와 같은 URI를 만듭니다.
 
 ```python
 import pyotp
-import qrcode
-
-# 등록
-secret = pyotp.random_base32()
-totp = pyotp.TOTP(secret)
-
-# QR 코드용 OTPAuth URI
-uri = totp.provisioning_uri(name="user@example.com", issuer_name="MyApp")
-img = qrcode.make(uri)
-img.save("qr.png")
-
-# 검증
-is_valid = totp.verify(user_code, valid_window=1)  # 현재 ±1 타임스텝(기본값 0)
+pyotp.TOTP('JBSWY3DPEHPK3PXP').provisioning_uri(name='alice@google.com', issuer_name='Example')
+# 'otpauth://totp/Example:alice%40google.com?secret=JBSWY3DPEHPK3PXP&issuer=Example'
 ```
 
-### Go 구현
+`JBSWY3DPEHPK3PXP`는 10바이트(80비트)뿐입니다. 문서 예시로는 괜찮지만 실제 사용에서는 RFC 4226의 최소 길이에 못 미칩니다.
+
+## 생성기, 인증 앱, 서버 검증은 서로 다른 역할입니다
+
+"2단계 인증 앱", "2FA 코드", "Google OTP", "TOTP 검증기"로 검색하면 비슷한 페이지가 나오지만, 이 세 역할은 다른 것이고 코드가 받아들여질지 답할 수 있는 것은 하나뿐입니다.
+
+| 역할 | 가진 것 | 하는 일 | 답할 수 없는 것 |
+|---|---|---|---|
+| TOTP 생성기(이 사이트) | 새로 고치면 아무것도 남지 않음 | 시크릿, 시각, 설정으로 코드를 다시 계산 | 서비스가 그 코드를 받아들이는지 |
+| 인증 앱 | 앱 또는 동기화 저장소의 시크릿 | 시크릿을 저장하고 주기마다 코드를 생성 | 자기 설정이 서버와 같은지, 지금 서버가 받아 주는지 |
+| 서버 검증 | 시크릿과 사용자별 상태(마지막으로 받은 T, 실패 횟수) | 시간 창, 재사용 거부, 시도 제한 규칙으로 수락 여부를 결정 | 기기 시계가 정확한지(어느 단계에서 일치했는지로만 간접적으로 알 수 있음) |
+
+**생성기는 계산만 하고 판정하지 않습니다.** [TOTP 생성기](/ko/tools/totp-generator/)는 앱과 같은 HMAC을 계산해 현재·이전·다음 코드와 시간 단계 T를 보여 줍니다. 서버의 시간 창, 재사용 기록, 시도 제한은 볼 수 없으므로 그 숫자가 받아들여질 것이라고 보장할 수 없습니다. "TOTP 검증기"를 자칭하며 시크릿과 코드를 함께 요구하는 페이지도 재계산과 대조를 할 뿐입니다. 입력 칸이 하나 더 있는 계산기이지 검증 주체가 아닙니다.
+
+**일상에서 "2단계 인증 앱"이라고 부르는 것은 인증 앱입니다.** Google OTP(Google Authenticator), Microsoft Authenticator, 비밀번호 관리자에 들어 있는 인증 기능은 시크릿을 앱 안에 저장하고 기기에서 코드를 만듭니다. 백업과 동기화 방식은 제품마다 다릅니다. `otpauth://`를 읽는 방식도 버전에 따라 다르므로, Key Uri Format 문서(마지막 편집 2018-11-26)의 "Google Authenticator는 `algorithm`과 `period`를 무시하고 Android 버전은 `digits`도 무시한다"는 기록은 그 당시 버전의 설명으로 읽어야 합니다. 기본값이 아닌 설정을 쓸 때는 실제로 지원할 앱으로 QR을 읽고 같은 주기의 코드를 비교하세요.
+
+**결정은 서버가 합니다.** 검증은 같은 시크릿과 같은 시간 단계를 준비한 뒤, 클라이언트가 할 수 없는 규칙을 적용합니다. [RFC 6238 §5.2](https://www.rfc-editor.org/rfc/rfc6238#section-5.2)는 네트워크 지연으로 최대 1단계까지 허용하도록 권하고, [§6](https://www.rfc-editor.org/rfc/rfc6238#section-6)은 시계 오차를 다루며, §5.2는 같은 코드의 두 번째 수락을 금지하고, [RFC 4226 §7.3](https://www.rfc-editor.org/rfc/rfc4226#section-7.3)은 시도 제한을 요구합니다. 다음 절에서 이 규칙을 하나씩 봅니다.
+
+용도별로 고르면 이렇습니다.
+
+- 설정 화면에서 직접 입력한 시크릿 확인, RFC 테스트 벡터 재현: [TOTP 생성기](/ko/tools/totp-generator/)
+- 매일 로그인: 인증 앱(새로 고치면 시크릿을 잊는 웹 페이지가 아닙니다)
+- 제출된 코드가 유효한지 판정: 서버 검증(서버 상태 없이는 어떤 페이지도 답할 수 없습니다)
+- QR 캡처에서 시크릿 꺼내기: [QR코드 스캔](/ko/tools/qr-code-decoder/)으로 `otpauth://` URI를 꺼낸 뒤 생성기에 붙여넣기
+- URI를 스캔할 수 있는 QR로 만들기: [QR코드 만들기](/ko/tools/qr-code-generator/)
+- HMAC 단계만 확인하거나 웹훅 서명 대조: [HMAC 생성기](/ko/tools/hmac-generator/)
+- 2차 인증이 보호할 비밀번호 생성: [비밀번호 생성기](/ko/tools/password-generator/)
+
+## 서버에서 지켜야 할 규칙
+
+6자리 코드가 안전한 것은 서버가 주변에 두는 규칙 덕분입니다.
+
+- **시간 창을 작게.** 서버는 코드가 도착한 시각만 알고, 코드가 생성된 시각은 모릅니다. [RFC 6238 §5.2](https://www.rfc-editor.org/rfc/rfc6238#section-5.2)는 전송 지연 범위의 이전 단계도 함께 비교하고, 네트워크 지연으로 최대 1단계까지만 허용하도록 권합니다. [§6](https://www.rfc-editor.org/rfc/rfc6238#section-6)은 시계 오차를 위한 설정 가능한 창과 토큰별 오차 기록을 설명합니다. 라이브러리 기본값은 제각각이고, pyotp 2.10.0의 `verify()`는 `valid_window=0`이라 현재 단계만 받습니다.
+- **재사용 거부.** §5.2는 한 번 검증에 성공한 코드를 두 번째 받아들이지 말아야 한다(MUST NOT)고 정합니다. 사용자별로 마지막으로 받은 T를 저장하고, 그보다 새로운 단계만 통과시킵니다.
+- **시도 횟수 제한.** 무작위 추측 한 번이 맞을 확률은 허용 단계마다 약 100만분의 1입니다. [RFC 4226 §7.3](https://www.rfc-editor.org/rfc/rfc4226#section-7.3)은 실패가 쌓이면 잠그거나 대기 시간을 늘리라고 요구합니다. 창을 3단계로 넓히면 추측 한 번의 확률도 3배가 되므로 창은 작게 유지합니다.
+- **키 보호.** 시크릿을 가진 사람은 앞으로의 모든 코드를 만들 수 있습니다. 저장할 때 암호화하고 로그에 남기지 않습니다.
+
+## 등록과 검증 구현
+
+일반적인 등록 흐름은 무작위 시크릿 생성 → `otpauth://` URI 작성 → QR 코드(스캔이 어려운 사용자를 위한 Base32 문자열 포함) 표시 → 현재 코드 한 번 입력받아 확인 → 시크릿 저장 순서입니다.
+
+**Node.js와 otplib v13:**
+
+```js
+import { generateSecret, generateURI, verify } from 'otplib'; // otplib v13
+import qrcode from 'qrcode';
+
+const secret = generateSecret();
+const otpauthUrl = generateURI({ issuer: 'MyApp', label: 'user@example.com', secret });
+const qrDataUrl = await qrcode.toDataURL(otpauthUrl);
+
+// 로그인 시
+const { valid } = await verify({ secret, token: userCode });
+```
+
+**Python과 pyotp:**
+
+```python
+import pyotp
+
+secret = pyotp.random_base32()
+totp = pyotp.TOTP(secret)
+uri = totp.provisioning_uri(name="user@example.com", issuer_name="MyApp")
+
+is_valid = totp.verify(user_code, valid_window=1)  # 현재 ±1단계(기본값 0)
+```
+
+**Go와 pquerna/otp:**
 
 ```go
 import "github.com/pquerna/otp/totp"
 
-// 등록
-key, err := totp.Generate(totp.GenerateOpts{
-    Issuer:      "MyApp",
-    AccountName: "user@example.com",
-})
-secret := key.Secret()
+key, err := totp.Generate(totp.GenerateOpts{Issuer: "MyApp", AccountName: "user@example.com"})
+secret := key.Secret() // key.URL()을 QR 코드로 표시
 
-// key.URL()을 QR 코드로 표시
-
-// 검증
 valid := totp.Validate(userCode, secret)
 ```
 
-## TOTP 파라미터
+어떤 라이브러리를 쓰든 출시 전에 RFC 표로 확인하세요. 시각을 고정할 수 있는 함수(예: pyotp의 `at()`)와 RFC 키를 쓰고 18개 값을 모두 비교합니다.
 
-RFC 6238은 기본값을 바꿀 수 있지만 모든 인증 앱이 이를 읽지는 않습니다. Google의 [Key Uri Format](https://github.com/google/google-authenticator/wiki/Key-Uri-Format)에는 Google Authenticator가 `algorithm`과 `period`를 무시하고, Android 버전은 `digits`도 무시한다고 적혀 있습니다.
+## 시계 오차
 
-| 파라미터 | 기본값 | 일반적인 대안 |
-|-----------|---------|---------------------|
-| 알고리즘 | SHA-1 | SHA-256, SHA-512 |
-| 자릿수 | 6 | 8 |
-| 기간 | 30초 | 60초 |
+양쪽 시각이 몇 초 안에서 맞아야 합니다. 휴대폰은 보통 자동으로 동기화되고, 서버는 NTP를 돌려야 합니다(`timedatectl status`로 Linux 호스트의 동기화 상태를 볼 수 있습니다). 사용자의 코드가 계속 틀리면 기기 시계를 먼저 확인하세요. TOTP 생성기는 페이지 서버의 `Date` 헤더와 기기 시계를 한 번 비교하고, 측정 오차를 빼고 약 3초 이상 차이가 나면 경고합니다. 이전·다음 코드도 보여 주므로 사용자가 정확히 한 단계 뒤나 앞에 있는지 알 수 있습니다.
 
-특별한 요구 사항이 없다면 **기본값(SHA-1, 6자리, 30초)을 사용하세요**. 비표준 설정은 일부 인증 앱과 호환성 문제를 일으킬 수 있습니다. 여기서 약점은 SHA-1이 아닙니다. 알려진 SHA-1 충돌 공격으로는 HMAC-SHA1을 깨지 못합니다([RFC 6194 §3.3](https://datatracker.ietf.org/doc/html/rfc6194#section-3.3)). 약점은 6자리 코드 자체로, 한 번 추측할 때마다 100만분의 1 확률로 맞으므로 서버는 실패 횟수를 제한해야 합니다([RFC 4226 §7.3](https://datatracker.ietf.org/doc/html/rfc4226#section-7.3)).
+## TOTP의 한계
 
-## 클록 동기화와 드리프트
+TOTP 코드는 피싱에 노출됩니다. 가짜 로그인 페이지가 코드를 받아 같은 30초 안에 실제 사이트로 전달하면 통과합니다. [WebAuthn](https://www.w3.org/TR/webauthn-2/) 자격 증명(패스키와 보안 키)은 사이트의 오리진에 묶이므로 비슷한 도메인에서는 쓸 수 없습니다. 그래도 TOTP는 비밀번호만 쓰는 것보다 훨씬 강하고, 통신사나 푸시 서비스 없이 오프라인에서도 동작합니다.
 
-TOTP는 서버와 클라이언트의 클록이 적절히 동기화되어 있어야 합니다. RFC 6238 [6절](https://www.rfc-editor.org/rfc/rfc6238#section-6)은 허용할 타임스텝 수를 정하고 토큰별로 감지한 드리프트를 기록하도록 권장합니다. T-1, T, T+1을 허용하는 설정이 흔하지만 기본값은 아닙니다(위의 pyotp 참고). [TOTP 생성기](/ko/tools/totp-generator/)는 이전·다음 코드를 보여 주고, 기기 시계가 서버와 약 3초 이상 차이 나면 경고합니다.
-
-사용자 기기의 클록이 크게 벗어나면(수 분) TOTP가 실패합니다. 모던 스마트폰에서는 드물지만 임베디드 기기나 커스텀 구현에서는 주의가 필요합니다.
-
-서버 클록은 NTP를 사용하세요. Linux에서:
-
-```bash
-timedatectl status        # 현재 NTP 동기화 상태 확인
-timedatectl set-ntp true  # NTP 동기화 활성화
-```
-
-## TOTP vs 다른 2FA 방식
-
-| 방식 | 보안성 | 피싱 저항성 | 외부 의존 없음 |
-|--------|----------|-------------------|----------------------|
-| TOTP | 높음 | 없음 | 있음 |
-| SMS OTP | 낮음 | 없음 | 없음(통신사) |
-| 푸시 알림 | 중간 | 없음 | 없음(앱 서버) |
-| FIDO2 / 패스키 | 매우 높음 | 있음 | 있음 |
-| 하드웨어 토큰(TOTP) | 높음 | 없음 | 있음 |
-
-TOTP는 실시간 피싱에 취약합니다(공격자가 사용자를 속여 가짜 사이트에서 코드를 입력하게 하고 즉시 중계하는 방식). 최고 보안을 위해서는 FIDO2/WebAuthn 하드웨어 키가 피싱 저항성을 제공합니다. TOTP는 비밀번호만 사용하는 것보다 보안을 크게 향상시키며, 대부분의 애플리케이션에서 실용적인 2FA 표준입니다.
-
-## 복구 코드
-
-TOTP와 함께 반드시 복구 코드를 구현하세요. 사용자가 인증 기기를 잃어버리면 접근을 복구할 수 있는 방법이 필요합니다:
-
-- 등록 시 8~10개의 일회용 복구 코드 생성
-- bcrypt 또는 Argon2로 해시화하여 저장
-- 한 번만 표시하고 오프라인에 저장하도록 안내
-- 각 코드는 사용 후 무효화
+등록할 때 복구 코드도 함께 발급하세요. 한 번만 쓸 수 있는 무작위 코드 8–10개를 만들어 해시(예: bcrypt 또는 Argon2)로 저장하고, 한 번만 보여 주며, 사용 후 무효화합니다.
 
 ```python
 import secrets
@@ -183,4 +195,4 @@ def generate_recovery_codes(count=10):
     return [secrets.token_hex(10) for _ in range(count)]
 ```
 
-**[TOTP 코드를 즉시 생성·테스트하기 →](/ko/tools/totp-generator/)**
+알려진 값으로 키나 서버 구현을 확인할 때는 [TOTP 생성기](/ko/tools/totp-generator/)를, HMAC 단계만 따로 보고 싶을 때는 [HMAC 생성기](/ko/tools/hmac-generator/)를 쓰세요.

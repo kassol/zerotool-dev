@@ -2,7 +2,7 @@
 title: "TOTP Explained: How RFC 6238 Codes Are Computed, Checked and Verified"
 description: "How a TOTP code is built from a secret and the clock, worked through with the RFC 6238 test vectors, plus what authenticator apps read from otpauth:// URIs and how servers should verify codes."
 pubDate: 2026-04-07
-updatedDate: 2026-09-30
+updatedDate: 2026-11-03
 lang: "en"
 tags: ["totp", "2fa", "otp", "authentication", "security", "rfc6238"]
 ---
@@ -98,6 +98,32 @@ pyotp.TOTP('JBSWY3DPEHPK3PXP').provisioning_uri(name='alice@google.com', issuer_
 ```
 
 Note that `JBSWY3DPEHPK3PXP` decodes to only 10 bytes (80 bits). It is fine as a documentation example and below the RFC 4226 minimum for real use.
+
+## Generator, Authenticator App and Server Are Three Different Jobs
+
+Searches for "2FA authenticator", "2FA code", "Google Authenticator" and "TOTP validator" land on the same pages, but the names cover three different things. Only one of them can tell you whether a code will be accepted.
+
+| Role | What it keeps | What it does | What it cannot tell you |
+|---|---|---|---|
+| TOTP generator (this site) | Nothing after a reload | Recomputes a code from a secret, a time and the settings | Whether a service accepts that code |
+| Authenticator app | The secret, in the app or its synced vault | Stores the secret and produces a new code each period | Whether its settings match the server, or whether the server would accept the code now |
+| Server verification | The secret and per-user state: last accepted step, failure count | Accepts or rejects a submitted code under its window, replay and rate-limit rules | Whether the device clock is right, except by inference from the accepted step |
+
+**The generator computes; it does not validate.** The [TOTP Generator](/tools/totp-generator/) runs the same HMAC as an app and shows the current code, the previous and next steps and the time-step counter. It has no access to a service's window, replay record or rate limit, so it cannot promise that the digits will be accepted. A page that asks for both the secret and the code and calls itself a "TOTP validator" does the same recomputation. It is a calculator with a second input, not a verifier.
+
+**The authenticator app is what users usually mean by "2FA authenticator".** Google Authenticator, Microsoft Authenticator and the authenticator built into password managers keep the secret in the app and generate codes on the device. Backup and sync behaviour varies by vendor. What they read from the provisioning URI also varies: the Key Uri Format wiki page (last edited 2018-11-26) records that Google Authenticator implementations ignored `algorithm` and `period`, and on Android also `digits`. That note describes versions from before that date, not the app on your phone. When you use non-default settings, scan the URI with the app you plan to support and compare one code in the same period.
+
+**The server decides.** Verification means matching the same secret and step, then applying rules a client cannot enforce. [RFC 6238 §5.2](https://www.rfc-editor.org/rfc/rfc6238#section-5.2) recommends accepting at most one step of network delay, [§6](https://www.rfc-editor.org/rfc/rfc6238#section-6) covers drift, §5.2 also forbids accepting the same code twice, and [RFC 4226 §7.3](https://www.rfc-editor.org/rfc/rfc4226#section-7.3) requires throttling. The next section works through these rules.
+
+Where each one fits:
+
+- Checking a secret typed from a setup screen, or reproducing an RFC vector: the [TOTP Generator](/tools/totp-generator/).
+- Logging in every day: an authenticator app, not a page that forgets the secret on reload.
+- Deciding whether a submitted code is valid: server-side verification; no page can answer that without the server's state.
+- Taking the secret out of a QR screenshot: the [QR Code Reader](/tools/qr-code-decoder/), then paste the `otpauth://` URI into the generator.
+- Turning the URI into a code you can scan: the [QR Code Generator](/tools/qr-code-generator/).
+- Isolating the HMAC step or checking a webhook signature: the [HMAC Generator](/tools/hmac-generator/).
+- Creating the password that the second factor protects: the [Password Generator](/tools/password-generator/).
 
 ## Verifying Codes on the Server
 

@@ -1,266 +1,203 @@
 ---
-title: "在线 Markdown 预览：实时渲染 Markdown 效果"
-description: "在线实时预览 Markdown 渲染效果，支持 GFM 表格、任务列表、代码高亮，无需安装，粘贴即用，适合 README、文档、博客写作场景。"
+title: "Markdown 预览：渲染范围、转义规则与中文加粗问题"
+description: "这份指南说明本站 Markdown 预览的渲染规则：CommonMark 与 GFM 的范围、原始 HTML 为什么显示为文字、中文标点后的加粗为什么失效，以及与 GitHub、GitLab、Notion 的差异。"
 pubDate: 2026-04-07
+updatedDate: 2026-11-03
 lang: "zh"
-draft: true
-tags: ["markdown预览", "在线markdown编辑器", "markdown渲染", "开发工具", "github flavored markdown"]
+tags: ["markdown预览", "github flavored markdown", "commonmark", "markdown渲染", "开发工具"]
 ---
 
-**在线 Markdown 预览工具**让你在一侧写 Markdown，另一侧实时看到 HTML 渲染结果——无需配置编辑器，无需构建步骤，无需浏览器插件。粘贴 README 草稿、博客文章或文档片段，提交前先确认渲染效果。
+每个 Markdown 渲染器回答的其实是同一个问题：这段文字换到别人那里渲染，会变成什么样？本页记录本站 [Markdown 预览](/zh/tools/markdown-preview/) 的实际规则，用来区分「文档写错了」和「渲染器不同」。以下内容在 2026-11-03 对照工具组件与 micromark 4.0.2、micromark-extension-gfm 3.0.0 逐项核对；引用的 HTML 都是渲染器对该输入的真实输出。
 
-[立即使用 Markdown 预览工具 →](/zh/tools/markdown-preview/)
+## CommonMark 与 GFM：这个预览渲染什么
 
-## Markdown 是什么？
+[CommonMark 0.31.2](https://spec.commonmark.org/0.31.2/)（2024-01-28 发布）是基础：段落、ATX 与 setext 标题、引用块、有序与无序列表、围栏代码与缩进代码、行内链接与引用式链接、图片、强调、行内代码、分隔线、反斜杠转义与实体引用。
 
-Markdown 是 John Gruber 于 2004 年创建的轻量标记语言，用纯文本语法生成 HTML——`**粗体**` 变成粗体，`# 标题` 变成 `<h1>`，以此类推。设计目标：源文本可读，渲染结果干净。
+[GitHub Flavored Markdown 0.29-gfm](https://github.github.com/gfm/)（2019-04-06 发布）是 CommonMark 的严格超集，规范里加了五项扩展：表格（4.10 节）、任务列表项（5.3 节）、删除线（6.5 节）、自动链接字面量（6.9 节）、被禁止的原始 HTML（6.11 节）。规范 1.1 节同时写明，GitHub 在转换之后还会做后处理与净化。
 
-Markdown 的应用场景几乎无处不在：
-- GitHub README 和 PR 描述
-- 文档站点（Docusaurus、MkDocs、VitePress）
-- 静态站点生成器（Astro、Hugo、Jekyll）
-- 笔记工具（Obsidian、Notion、Bear）
-- API 文档（Swagger 描述、Postman collection）
+预览用 micromark 加 GFM 扩展，并且打开了这个包提供的全部扩展：规范里的五项，加上脚注。实际效果是：
 
-## GitHub Flavored Markdown（GFM）
+- 表格支持列对齐。
+- 任务列表的复选框带 `disabled`，能看出勾选状态，但在预览里点不动。
+- 删除线接受一个或两个波浪线，`~一个~` 与 `~~两个~~` 都会生成 `del` 元素。
+- 裸网址、`www.` 开头的主机名和邮箱地址都会自动成为链接，邮箱链接带 `mailto:`。
+- 脚注有上标引用与返回链接。
 
-最广泛使用的 Markdown 方言是 **GitHub Flavored Markdown（GFM）**，它在 CommonMark 规范基础上增加了开发者常用特性：
+没有按钮需要点：停止输入 300 ms 后预览更新，打字快的人看到的是每次停顿渲染一次。
 
-### 表格
+## 它不渲染什么
 
-```markdown
-| 方法   | 路径            | 说明         |
-|--------|-----------------|--------------|
-| GET    | /users          | 获取用户列表 |
-| POST   | /users          | 创建用户     |
-| DELETE | /users/{id}     | 删除用户     |
-```
+渲染器只实现 CommonMark 与上面的 GFM 扩展。这两项规范之外的内容在这里没有含义，源文本会原样留下：
 
-支持列对齐（`:---` 左对齐、`:---:` 居中、`---:` 右对齐），渲染为标准 HTML 表格。
+- 数学公式：`$x^2$` 与 `$$` 块保持文字，不会排版。
+- Mermaid 等图表围栏：`mermaid` 代码块就是普通代码块，没有图，也没有语法配色。
+- 表情短代码、用户提及与议题引用，例如 `:tada:`、`@octocat`、`#123`，都按原文显示。
+- GitHub 的提醒块：`> [!NOTE]` 仍是引用块，第一行是字面量标记，引用本身照常渲染。
+- 标题锚点：任何标题都没有 `id`。渲染器唯一生成的标识符是脚注区的 `footnote-label`。
+- front matter、定义列表、include、目录标记：不剥离、不解析、不替换。
 
-### 任务列表
+为某个平台写的文档常常用到其中一种写法；预览把它显示成文字，发布前就能看出差异。
 
-```markdown
-- [x] 搭建 CI 流水线
-- [x] 编写单元测试
-- [ ] 添加集成测试
-- [ ] 部署到预发环境
-```
+## 原始 HTML 一律转义
 
-GitHub 在 issue 和 PR 中将这些渲染为可交互的复选框。
-
-### 带语法高亮的代码块
-
-````markdown
-```javascript
-async function fetchUser(id) {
-  const res = await fetch(`/api/users/${id}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-}
-```
-````
-
-开头三反引号后跟语言标识符（`javascript`、`python`、`go`、`bash` 等），大多数渲染器会触发语法高亮。
-
-### 删除线
-
-```markdown
-~~废弃的 API~~ → 请使用 `/v2/users`
-```
-
-### 自动链接
-
-GFM 自动将裸 URL 转换为可点击链接，无需手动写 `[文字](url)` 语法。
-
-## Markdown 核心语法速查
-
-### 标题
-
-```markdown
-# 一级标题
-## 二级标题
-### 三级标题
-#### 四级标题
-```
-
-### 强调
-
-```markdown
-**粗体**
-*斜体*
-***粗斜体***
-`行内代码`
-```
-
-### 链接与图片
-
-```markdown
-[链接文字](https://example.com)
-[带标题的链接](https://example.com "悬停提示")
-![图片描述](image.png)
-```
-
-### 列表
-
-```markdown
-- 无序列表项
-- 另一项
-  - 子项（缩进 2 个空格）
-
-1. 第一项
-2. 第二项
-3. 第三项
-```
-
-### 引用块
-
-```markdown
-> 这是一段引用。
->
-> 可以跨越多个段落。
->> 嵌套引用
-```
-
-### 分隔线
-
-```markdown
----
-***
-___
-```
-
-### 内嵌 HTML
-
-Markdown 直接透传原始 HTML，可以用于 Markdown 无法表达的场景：
+渲染器以 `allowDangerousHtml: false` 创建，所以 Markdown 里的每个 HTML 标签都会被转义成文字。下面这段输入：
 
 ```markdown
 <details>
-<summary>点击展开</summary>
+<summary>更多</summary>
 
-隐藏内容在这里。
+隐藏的一行。
 
 </details>
 ```
 
-## 典型应用场景
+输出是：
 
-### README 文件
+```html
+&lt;details&gt;
+&lt;summary&gt;更多&lt;/summary&gt;
+<p>隐藏的一行。</p>
+&lt;/details&gt;
+```
 
-结构良好的 README 通常包含：
+转义后的标签之间出现空行时，里面的段落仍会按 Markdown 解析，容器本身不会。
+
+原因在运行位置。预览运行在 zerotool.dev 上，与那些把输入存进浏览器存储的工具同源。如果原始 HTML 被渲染，粘贴文本里一个带 `onerror` 的 `img` 标签就会在本站执行脚本，还能读到其他工具存下的内容。转义直接去掉了这条路：你的文字里没有任何标签能变成活的元素。
+
+GitHub 走的是较窄的路。GFM 6.11 节只转义九个标签名的左尖括号（title、textarea、style、xmp、iframe、noembed、noframes、script、plaintext），随后 GitHub 再做净化，见 1.1 节。本预览转义全部标签，比这两步都严格。
+
+链接与图片遵循同一原则。链接地址只有是相对地址，或使用 `http`、`https`、`mailto`、`irc`、`ircs`、`xmpp` 时才保留；图片地址只有是相对地址，或使用 `http`、`https` 时才保留。其余地址被清空，链接文字留下：
 
 ```markdown
-# 项目名称
-
-简短说明这个项目做什么。
-
-## 安装
-
-```bash
-npm install my-package
+[docs](javascript:alert(1)) 与 ![x](data:image/png;base64,AAAA)
 ```
 
-## 使用方法
+渲染为：
 
-```javascript
-import { myFn } from 'my-package';
-myFn({ option: true });
+```html
+<p><a href="">docs</a> 与 <img src="" alt="x" /></p>
 ```
 
-## API 参数
+所以链接、图片和强调都用 Markdown 语法写。段落内换行用行尾反斜杠或行尾两个空格，两者都生成 `br` 元素，都不依赖原始 HTML。文档确实需要 `details`、`kbd`、`sub` 时，到最终发布的平台上检查。
 
-| 参数    | 类型    | 默认值 | 说明           |
-|---------|---------|--------|----------------|
-| debug   | boolean | false  | 开启调试日志   |
-| timeout | number  | 5000   | 请求超时（ms） |
+「复制 HTML」复制的就是这份转义后的输出，不含预览专用的语法配色，也不含预览为链接添加的 `target` 与 `rel`。复制结果里的原始 HTML 仍是转义状态，粘到别的页面时，只有 Markdown 本身生成的那部分会成为元素。
 
-## 许可证
+## 中文标点为什么让加粗失效
 
-MIT
-```
-
-### 接口文档
-
-在引入 OpenAPI 之前，Markdown 是记录 REST 接口的理想选择：
+这是中文写作者最常遇到的情况。输入：
 
 ```markdown
-## POST /auth/token
-
-用凭据换取 JWT 访问令牌。
-
-**请求体**
-
-```json
-{
-  "email": "user@example.com",
-  "password": "secret"
-}
+**注意：**这里
 ```
 
-**响应 200**
+预览显示的是星号本身：
 
-```json
-{
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "expiresIn": 3600
-}
+```html
+<p>**注意：**这里</p>
 ```
 
-**响应 401** — 凭据无效。
+代码没有坏。CommonMark 用分隔符序列判断强调，6.2 节把「右翼分隔符序列」定义为：前面不是空白，并且（前面不是标点，或者前面是标点而后面是空白或标点）。这里的收尾 `**` 前面是全角冒号「：」，属于 Unicode 标点，后面是汉字「这」，属于字母。两个分支都不成立，收尾序列无法闭合，开头的序列也只能保持字面。
+
+三种改法都保留原意：
+
+- 收尾标记后加一个空格：`**注意：** 这里` 得到 `<strong>注意：</strong> 这里`。
+- 收尾标记后加全角空格（U+3000）：`**注意：**　这里`。U+3000 属于 Unicode 的 Zs 类别，CommonMark 把它算作空白，序列可以闭合，较宽的间隙也保留下来。
+- 把标点移到标记外：`**注意**：这里` 得到 `<strong>注意</strong>：这里`。
+
+这条规则与汉字无关，真正的条件是「标点紧贴字母」。英文一样会失败：`**Note:**this` 保持字面，`**Note:** this` 才是粗体。中文更常遇到这种情况，因为全角冒号、括号通常直接贴着下一个字，中间没有空格习惯。
+
+同样的原因可以解释 `**「重要」**说明` 与 `**10%**的折扣`：收尾序列前面是右括号或百分号，后面紧跟汉字。加空格，或把标点移出标记，都能修好。
+
+本站的 [Markdown 转 Word 工具](/zh/tools/markdown-to-word/) 启用了 CJK-friendly 的 micromark 扩展，这类写法不加空格也能识别。预览有意不启用：它的职责是展示 CommonMark 或 GFM 渲染器会怎么处理同一段文字。[Markdown 速查表](/zh/blog/markdown-cheat-sheet/) 把同一批写法连同渲染结果列在一起。
+
+## 代码、表格、列表、引用与 front matter
+
+围栏代码块在开头三个反引号后写语言标识，标识决定配色：
+
+```js
+const greet = name => `Hello, ${name}!`;
+console.log(greet("ZeroTool"));
 ```
 
-### 更新日志
+组件注册了 12 种语言，可用这些名字：JavaScript（`js`）、TypeScript（`ts`）、Python（`py`）、Go、PHP、Ruby（`rb`）、Java、Bash（`sh`、`shell`）、JSON、XML（`html`）、CSS、Markdown（`md`）。其他标识生成普通代码块：文字被转义，等宽显示，没有配色。四空格缩进代码同样可用，且永远没有语言。
 
-Keep a Changelog 格式使用 Markdown：
+表格需要表头行与分隔行。分隔行里的冒号决定对齐，单元格内的竖线写成 `\|`：
 
 ```markdown
-## [2.1.0] — 2026-03-15
-
-### 新增
-- 深色模式支持
-- 快速搜索快捷键（Cmd+K）
-
-### 修复
-- Windows 换行符标准化问题 (#234)
-- WebSocket 处理器内存泄漏 (#241)
-
-### 废弃
-- `legacyAuth()` — 请改用 `authenticate()`
+| 设置 | 默认值 |
+|:-----|-------:|
+| 重试 | 3 |
 ```
 
-## Markdown 方言对比
+输出会在每个单元格上带对齐属性，本例是 `align="left"` 与 `align="right"`。首尾竖线可以省略，列数由分隔行决定。
 
-| 方言 | 使用场景 | 扩展特性 |
-|---|---|---|
-| CommonMark | 通用基准 | 严格规范，行为一致 |
-| GFM | GitHub、GitLab、Gitea | 表格、任务列表、自动链接 |
-| MDX | React/Astro 站点 | Markdown 中嵌入 JSX 组件 |
-| MultiMarkdown | 学术写作 | 脚注、文献引用 |
-| Pandoc Markdown | 文档转换 | LaTeX 公式、引用 |
-
-对于大多数开发者内容，GFM 是正确的选择。对于静态站点，MDX 提供完整的组件能力。
-
-## Markdown 写作技巧
-
-**保持标题层级连续** — 不要跳级（不要从 H1 直接跳到 H3）。屏幕阅读器和文档生成工具依赖标题树。
-
-**块级元素前后留空行** — 在标题、代码块、列表和引用块前后各加一个空行。部分解析器在缺少空行时渲染结果不正确。
-
-**优先使用围栏式代码块** — 四空格缩进代码在嵌套列表中容易产生歧义。带语言标识的围栏式代码块（三反引号）含义明确，且支持语法高亮。
-
-**对重复 URL 使用引用链接** — 避免在文中多次重复同一个长 URL：
+嵌套列表按父项的内容列缩进。一个列表符号加一个空格占两列，所以子项前缩进两个空格就够：
 
 ```markdown
-详情参见 [MDN 文档][mdn]。
-[MDN][mdn] 网站也有相关教程。
-
-[mdn]: https://developer.mozilla.org
+- 父项
+  - 子项
 ```
 
-**避免用行尾空格换行** — 行尾两个空格换行（`行内容  \n`）不可见，容易出错。改用 `<br>` 或重新组织段落。
+有序列表保留起始编号：以 `3.` 开头的列表在输出里带 `start="3"`。引用块用第二个 `>` 嵌套；引用行里的空行会在同一个引用内开始新段落。
 
-## 立即预览你的 Markdown
+front matter 不属于 CommonMark 也不属于 GFM，预览不会剥离。文件以 `---` 开头时，这一行变成分隔线，结尾的 `---` 则充当上一行的 setext 标题下划线：
 
-[ZeroTool 的 Markdown 预览工具](/zh/tools/markdown-preview/)支持 GitHub Flavored Markdown 实时渲染，带完整语法高亮。粘贴内容，即时看到效果——无需注册，全程本地处理，数据不离开浏览器。
+```markdown
+---
+title: "发布说明"
+---
 
-**[打开 Markdown 预览工具 →](/zh/tools/markdown-preview/)**
+正文
+```
+
+渲染为：
+
+```html
+<hr />
+<h2>title: &quot;发布说明&quot;</h2>
+<p>正文</p>
+```
+
+实用做法是粘贴前删掉 front matter，或者把整份文件放进围栏代码块里检查。setext 标题（`标题` 下面一行 `====`）与引用式链接都能正常工作。
+
+## 脚注
+
+GFM 规范没有定义脚注，但预览启用了它：GitHub 在 2021-09-30 把脚注加进 Markdown 字段，micromark 的 GFM 包也带了实现。语法是正文里的引用加别处的定义：
+
+```markdown
+一条说明。[^1]
+
+[^1]: 说明文字。
+```
+
+第一行变成带上标链接，标识符是 `user-content-fn-1`；定义变成一个 `section`，类名 `footnotes`，内含有序列表与返回链接。生成的小标题是英文单词 Footnotes，带 `sr-only`，四种语言页面都一样，工具没有为它准备译文。引用是片段链接，点击只在预览内部滚动，不会打开新标签页。
+
+定义可以写在文档的任何位置，包括引用它的段落之前，一条定义也能被多次引用。编号按首次引用的顺序，不按定义的顺序。
+
+## 隐私：在页面里完成渲染
+
+Markdown 由浏览器里的 JavaScript 解析和渲染，不上传，工具也不保存：组件从不调用站点的存储接口，工具不会把文字写进 localStorage、Cookie 或地址栏。「清除」会清空编辑框、预览与计数，并取消排队中的更新；焦点在工具内时，Ctrl/⌘+L 做同样的事。
+
+图片是例外。`![说明](https://…)` 会生成一个图片元素，浏览器从该地址下载，图片服务器能看到你的 IP 地址与浏览器信息。`images/a.png` 这样的相对路径会向 zerotool.dev 请求，站上没有这个文件；`file:` 地址会被清空。如果这段文字不能引发任何请求，就不要放图片，或先用占位文字。
+
+「复制 HTML」在剪贴板写入成功之后记一次统计事件，只含工具名与动作。失败或被新操作取代的复制不记录，Markdown 与渲染出的 HTML 都不在事件里。预览页和其他工具页一样加载站点的统计与广告脚本；Markdown 不是它们的输入。
+
+## 与 GitHub、GitLab、Notion 的差异
+
+预览展示的是 CommonMark 与 GFM 这一层。其他产品会在上面再叠一层，意外多半来自这一层。
+
+GitHub 先把 GFM 转成 HTML，再做后处理与净化（GFM 1.1 节）。它会为标题生成锚点，所以 `#installation` 那样的链接在 GitHub 有效，在这里无效。在 issue 与 pull request 里，任务列表的方框可以点，本预览保持禁用。提醒块、数学公式、Mermaid 图、表情短代码、提及与议题引用属于 GitHub 自己的语法，没有 CommonMark 含义，用这些写法的文档在这里看起来是普通文字。
+
+GitLab 的官方文档把 GitLab Flavored Markdown 描述为 CommonMark 加 GFM 扩展，再加 GitLab 自有的扩展，并列出了 front matter、提醒块、描述列表、数学公式、图表与 GitLab 引用等新增项；它也会为每个标题自动生成锚点。同一份文件，本预览把 front matter 变成一条分隔线和一个标题，在 GitLab 里则是元数据。
+
+Notion 是块编辑器。它的帮助页把 Markdown 描述为输入时的快捷写法，页面由块组成，本身不是 Markdown 文本。直接对比只在「能作为块内容保留的文字」上成立；折叠块、数据库、同步块没有 Markdown 形式，Markdown 渲染器没有东西可显示。
+
+可用的判断是：本预览回答「CommonMark 与 GFM 这一层产出什么」，平台层是叠加的。文档必须在某个平台上看起来正确时，发布前到那个平台渲染一次。
+
+## 限制与相关工具
+
+词数先把首尾空白去掉，再按空白切分，所以一整段中文只算一个词。字符数是字符串的 UTF-16 代码单元长度：包含空格与换行，基本平面之外的字符算两个。预览没有文件选择，也没有导出，编辑框就是纯文本输入区。
+
+「复制 HTML」给出渲染器的 HTML，不含预览加上的配色标签，也不含预览为非片段链接添加的 `target` 与 `rel`。原始 HTML 在复制结果里仍是转义状态。图片保留原地址，粘到别的页面后仍会向那些主机发起请求。
+
+相关工具：[Markdown 表格生成器](/zh/tools/markdown-table-generator/) 处理竖线转义与中日韩文字的列对齐；[Markdown 转 Word](/zh/tools/markdown-to-word/) 导出带标题样式、编号、表格与脚注的文档，并能识别中文标点旁的加粗；[Markdown 速查表](/zh/blog/markdown-cheat-sheet/) 把语法和它产出的 HTML 列在一起。[Markdown 预览](/zh/tools/markdown-preview/) 本身适合在粘贴到别处之前先检查一遍。

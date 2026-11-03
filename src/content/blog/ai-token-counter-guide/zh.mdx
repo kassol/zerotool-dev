@@ -1,14 +1,16 @@
 ---
 title: "大模型的 Token 是什么：分词器怎样数你的文字"
-description: "Token 是带编号的一小段文本。用实测数字看 GPT、DeepSeek 的分词器怎样切同一句中文，为什么按字数估算不准，以及怎样在代码里精确计数。"
+description: "Token 是带编号的一小段文本。用实测数字看字节级 BPE 怎样切中文、日文和代码，为什么 GPT、DeepSeek、Claude、Gemini 的数字不同，以及上下文窗口和价格表该怎么读。"
 pubDate: 2026-05-07
-updatedDate: 2026-10-01
+updatedDate: 2026-11-03
 lang: "zh"
 tags: ["llm", "tokenizer", "gpt", "deepseek", "开发者工具"]
 noindex: true
 ---
 
-Token 是大模型读写文本的单位。模型看到 prompt 之前，分词器先把文本切成小段，再把每一段换成词表里的一个编号。API 按 token 计费，限速按 token 计算，上下文窗口也是 token 数的上限。下面的数字都来自 [Token 计算器](/zh/tools/ai-token-counter/)，与 OpenAI tiktoken、DeepSeek 官方分词器的结果一致。
+Token 是大模型读写文本的单位。模型看到 prompt 之前，分词器先把文本切成小段，再把每一段换成词表里的一个编号。API 按 token 计费，限速按 token 计算，上下文窗口也是 token 数的上限。
+
+这篇指南讲清四件事：token 到底切在哪里、字节级 BPE 怎样决定边界、为什么同一句话在不同模型上数字不同、以及怎样把数字换算成价格和上下文占用。下面的数字都来自 [Token 计算器](/zh/tools/ai-token-counter/)，与 OpenAI tiktoken、DeepSeek 官方分词器的结果一致；价格与上限按 2026-10-01 各厂商官方页面的口径。
 
 ## 一句中文被切成了什么
 
@@ -26,28 +28,106 @@ Token 是大模型读写文本的单位。模型看到 prompt 之前，分词器
 
 {/* atc: {"text": "你好，世界！", "o200k": 4, "cl100k": 7, "deepseek": 4} */}
 
+所以 token 既不是字，也不是词。一个三字词可能是 1 个 token，也可能被拆成 2 个；一个汉字可能是 1 个 token、2 个字节 token，或者和相邻的字一起构成一个更长的 token。只有词表和合并规则能决定。
+
 ## 分词器怎样决定切在哪里
 
 GPT 和 DeepSeek 用的都是字节级 BPE（byte pair encoding，Sennrich 等人 2016 年的论文）。先用正则表达式把文本粗切成词、数字、标点、空白等片段，片段之间不会合并；再在每个片段内部从单个字节开始，反复合并词表里排名最靠前的相邻一对，直到没有可合并的对为止。
 
 词表大小不同：`cl100k_base` 有 100,277 项，`o200k_base` 有 200,019 项，DeepSeek V4 有 129,280 项（都含特殊 token）。词表越大，能整块收下的中文词越多。
 
-## 按字数估算差多少
+正则预切分这一步最容易被忽略。合并表里即使有「的」和「天気」，只要正则已经把两个片段分开，它们就不会再被合并。这也解释了一个看似矛盾的现象：以英文语料为主的 `o200k_base` 仍然能把常见中文词收成一个 token，因为词表里存了整词，而不只是字节。DeepSeek 更进一步，把汉字和假名的连续片段单独切开，所以同一句里英文词和中文词按不同规则计算。
 
-各家文档都给了经验值：DeepSeek 说 1 个中文字符约 0.6 个 token、1 个英文字符约 0.3 个；Google 说 Gemini 约 4 个字符一个 token；Anthropic 说英文约 4 个字符一个 token。它们都补了一句「以接口返回为准」。用 Token 计算器自带的 192 字中英混排示例对比：
+## 同一段文字，三种分词器的数字
+
+计数只在同一种分词器内部可比。下面四段文字分别用三种分词器计算：
+
+{/* atc: {"text": "你好，世界！", "o200k": 4, "cl100k": 7, "deepseek": 4} */}
+{/* atc: {"text": "東京の天気は晴れ", "o200k": 7, "cl100k": 10, "deepseek": 7} */}
+{/* atc: {"text": "什么是 AI 里的 token？", "o200k": 7, "cl100k": 10, "deepseek": 6} */}
+
+| 文字 | 字符数 | `o200k_base` | `cl100k_base` | DeepSeek V4 |
+|---|---:|---:|---:|---:|
+| What is a token in AI? | 22 | 7 | 7 | 7 |
+| 你好，世界！ | 6 | 4 | 7 | 4 |
+| 東京の天気は晴れ | 8 | 7 | 10 | 7 |
+| 什么是 AI 里的 token？ | 16 | 7 | 10 | 6 |
+
+英文在三种分词器之间几乎不变；中文和日文变化很大。文本越长，差距越大。计算器自带的中文样例是一段 192 字的代码评审请求，DeepSeek V4 数出 111 个 token，`o200k_base` 133 个，`cl100k_base` 172 个：
 
 {/* atc: {"text": "你是一名资深后端工程师，正在评审一个合并请求：在 PostgreSQL 分析库前面加一层 Redis 读穿缓存。\n\n所有聚合查询的缓存时间都是 60 秒。作者预计看板接口的 p99 延迟会从 1200 毫秒降到 50 毫秒以下，高峰期每分钟 1.2 万次请求。\n\n请列出两个风险最高的故障场景，判断 60 秒是否适合财务报表看板，并给出合并前应加的一项监控指标。每条不超过 80 字。", "o200k": 133, "cl100k": 172, "deepseek": 111} */}
 
-| 方法 | token 数 |
-|---|---:|
-| 按「4 个字符一个 token」估算 | 48 |
-| DeepSeek V4 精确 | 111 |
-| o200k_base 精确 | 133 |
-| cl100k_base 精确 | 172 |
+同一段文字，111、133、172，相差 55%。各家文档给的经验值会把这个差距盖住：OpenAI 的帮助文档说英文约 4 个字符或 0.75 个词，Google 说 Gemini 约 4 个字符一个 token，DeepSeek 说 1 个中文字符约 0.6 个 token、1 个英文字符约 0.3 个。用「4 个字符一个 token」估算上面这段 192 字，得到 48 个，不到任何一个真实值的一半。三家文档都补了一句：以接口返回的结果为准。
 
-按 4 个字符估算只有实际的一半不到；三个分词器之间也差了 55%。比较不同厂商的价格，要先用各自的分词器数，再乘单价。
+估算误差的方向很重要。中文字符换算成 token 时，按字符估通常偏低一半以上；英文散文用 4 个字符一 token 比较接近，但代码、JSON 和表格会带来标点、缩进和重复的键名，按字符估常常偏低。要报预算、要判断是否超限，只能用将要处理这次请求的那个分词器数一遍。
+
+## 为什么 Claude、Gemini 和 GPT-6 数不准
 
 Claude 和 Gemini 没有公开可在本地运行的分词器。Anthropic 说明 Claude 4.7 及以后的模型换了新分词器，同一段文本约多 30% 的 token，所以去年模型上数出的 token 数不能直接套到今年的模型上。
+
+厂商提供的是计数接口，不是词表：
+
+- Claude 用 `POST /v1/messages/count_tokens`，请求体和消息请求一致；文档把结果称作估算，并受它自己的速率限制。
+- Gemini 用 `models.countTokens`。
+- OpenAI 的 `POST /v1/responses/input_tokens` 会把消息角色与分隔符的格式 token、图片、文件和工具定义一起算进去。
+
+最后一点是「文本计数」和「账单」的分界。本地分词器只量一段字符串；一次对话请求还会带角色标记、分隔符、系统提示和工具 schema。只有厂商的接口能把这些算进去，也只有在判断「这次请求放不放得下」时才应该用它。
+
+GPT-6 在本地同样数不准：tiktoken 0.14.0 的对照表里没有它，OpenAI 也没有公开它的分词器。计算器给 Claude、Gemini 和 GPT-6 的行标了 ≈，显示的是 `o200k_base` 的参考值。这个参考值适合比较两个 prompt 谁更长，不能当账单。没有公开分词器却给出「精确 GPT-6 计数」的工具，都是在猜。
+
+## 上下文窗口怎么读
+
+上下文窗口是一个模型在单次请求里能容纳的 token 上限。厂商还会单独限制单次输出长度；计算器「上下文」一列除的是输入上限。文本本身就超过上限时，这一行会被标出；即使刚好不超，请求里还有指令和格式 token，所以贴着上限的文本实际上放不下。
+
+| 模型 | 输入上限（token） | 什么时候会踩到 |
+|---|---:|---|
+| gpt-4o | 128,000 | 长文档比新模型更早需要分块 |
+| gpt-5.4-mini | 272,000 | 与 gpt-5.5 的长上下文价格档同一条线 |
+| gpt-5.5 | 1,050,000 | 输入超过 272,000 时整次请求按更高的单价 |
+| claude-opus-5-5 | 1,000,000 | 没有本地分词器，用 `count_tokens` |
+| gemini-3.1-pro-preview | 1,048,576 | 输入超过 200,000 时整次请求按更高的单价 |
+| text-embedding-3-small | 8,192 | 单条输入；文档要按这个长度切块 |
+
+以上是各模型页写的输入上限，2026-10-01 核对。两个实际后果：第一，向量化流程要按 token 切块，不能按字符切；8,192 token 一条的上限下，一篇 10 万字符的英文文档可能要切三到四块，同样字符数的中文文档往往要更多块。第二，长上下文加价按整次请求计算，不是只对超出阈值的部分加价，所以刚超过 272,000 token 的请求可能比刚低于它的贵一倍以上。
+
+## 价格表怎么读
+
+API 价格按每百万 token 计，输入和输出分开：
+
+```
+cost = input_tokens × input_price / 1,000,000 + output_tokens × output_price / 1,000,000
+```
+
+按 2026-10-01 的价格，上面那段 192 字加 1,000 个输出 token，在 gpt-5.5 上是 $0.030665（输入 $5、输出 $30 每百万，133 个输入 token），在 deepseek-flash 的高峰价上是 $0.0012333（$0.30 与 $1.20，111 个输入 token）。两边的输出都占大头：短 prompt 的账单主要由回答长度决定。
+
+三个细节会改变算式：
+
+- **长 prompt 加价**：gpt-5.5 与 GPT-6 输入超过 272,000 token 时，整次请求按输入 2 倍、输出 1.5 倍计价；gemini-3.1-pro-preview 超过 200,000 token 也会加价。计算器会切换单价并在行上标出。
+- **分时计价**：[中文价格页](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)（2026-10-01）里 deepseek-flash 输入 2 元、输出 8 元每百万 token，deepseek-v4-pro 为 9 元与 27 元；北京时间工作日 9:00–12:00、14:00–18:00 以外半价。
+- **没算进去的**：批量折扣、提示缓存和商务折扣不在表里。命中缓存后输入可能只按标准价的一小部分计费，生产账单会低于这个估算。
+
+价格和模型名会变。表格下方的日期是核对日期；要把数字写进预算之前，先重读厂商页面。
+
+## 没有分词器时怎么估算
+
+有时手上只有字符数：CMS 的字数限制、日志里的一行、编辑器里的草稿。知道误差方向，仍然可以先估一个范围。
+
+| 文字 | 经验范围 | 本文样例的实测 |
+|---|---|---:|
+| 中文 | 1 个字约 0.5–1.0 个 token | 192 字 → 111–172 个 |
+| 英文散文 | 1 个 token 约 4 个字符 | 22 个字符 → 7 个（每 token 3.1 个字符） |
+| 日文 | 1 个字约 0.6–1.0 个 token | 275 字 → 180–242 个 |
+| 韩文 | 1 个字约 0.5–1.0 个 token | 277 字 → 164–231 个 |
+| JSON、代码、日志 | 标点、缩进和键名单独算 | 先压缩再数，缩进也是 token |
+
+范围故意留得很宽。它们来自本文的实测样例和各家的公开比例，不是语言模型推出来的公式。快速判断时取下限，不能越过的限制取上限。
+
+真正要用的数字，按下面的顺序确认：
+
+1. 先用[字数统计工具](/zh/tools/word-counter/)数字符和词数，确认粘贴没有截断。
+2. 模型用 `o200k_base`、`cl100k_base` 或 DeepSeek V4 时，用 [Token 计算器](/zh/tools/ai-token-counter/)数，这三种计数是精确的。
+3. Claude、Gemini 和 GPT-6 要把完整请求发给厂商的计数接口。拿英文字符比例乘中文字符数当预算，误差会落在最贵的那一侧。
+4. 给系统提示、工具定义和回答留出空间。文本接近上下文上限时，缩短输入，别只调小输出上限。
 
 ## 在代码里精确计数
 
@@ -68,20 +148,31 @@ DeepSeek 用[离线计数包](https://api-docs.deepseek.com/zh-cn/quick_start/to
 ```python
 from tokenizers import Tokenizer
 
-tok = Tokenizer.from_file("deepseek_v4_tokenizer/tokenizer.json")
+tok = Tokenizer.from_file("tokenizer.json")  # 离线包内该文件的路径
 print(tok.encode("什么是 AI 里的 token？").ids)
 # [25043, 7703, 223, 7210, 17840, 1148]
 ```
 
 计数包的示例脚本用 transformers 加载。2026 年 10 月 1 日实测，transformers 5.18.0 对这个包里的中文文本返回空列表，4.57.6 与 `tokenizers` 0.23.2 返回上面的结果。离线脚本请固定 transformers 4.x，或像上面这样直接用 `tokenizers`。
 
-Claude 用 `POST /v1/messages/count_tokens`（免费，文档称结果是估算），Gemini 用 `models.countTokens`。OpenAI 的 `POST /v1/responses/input_tokens` 会把消息角色、分隔符、图片、文件和工具定义一起算进去，这部分本地分词器看不到。
+JavaScript 的移植版另有问题。js-tiktoken 按 JavaScript 规则读正则里的 `\s`，包含 U+FEFF、不包含 U+0085；tiktoken 用的是 Unicode White_Space，开头带 BOM 的文本可能切得不一样。它的合并循环在长串上也很慢：2026-10-01 实测，2 万个连续汉字在 Node.js 里跑了 229 秒。计算器改写了 `\s`，并用优先队列合并，测试集在 1,500 多段字符串上与 tiktoken、`tokenizers` 逐个比对 id。
 
-## 计费时的几处坑
+## 发请求前的检查
 
-- **DeepSeek 分时段计价**：[中文价格页](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)（2026-10-01）中 deepseek-flash 输入 2 元、输出 8 元每百万 token，北京时间工作日 9:00–12:00、14:00–18:00 以外半价。
-- **输出比输入贵**：上面的 192 字示例加 1,000 个输出 token，在 gpt-5.5 上约 0.0307 美元，其中 0.03 美元是输出。
-- **长上下文加价**：gpt-5.5 与 GPT-6 输入超过 272,000 token 时整次请求按 2 倍输入、1.5 倍输出计价；gemini-3.1-pro-preview 超过 200,000 token 也会加价。
-- **向量模型**：text-embedding-3 系列用 `cl100k_base`，单条输入上限 8,192 token。
+长 prompt 出问题，多半不是分词器算错，而是送进去的东西和想的不一样。四步检查：
 
-相关工具：[字数统计工具](/zh/tools/word-counter/)、[API Key 脱敏工具](/zh/tools/secret-redactor/)。
+1. **先压缩载荷**。带缩进的 JSON 会把空格、换行和重复键名都算成 token。先在 [JSON 格式化工具](/zh/tools/json-formatter/)里压缩，再拿去计数；如果请求体是作为字符串发送的，压缩后的文本才是真正发出去的内容。
+2. **只取需要的字段**。JSON Lines 日志可以用 jq 先筛选、重排，再计数。jq Playground 在浏览器里跑同样的过滤器，输出可以直接粘进计算器。
+3. **用对应模型的分词器数**。`o200k_base`、`cl100k_base` 和 DeepSeek V4 用 Token 计算器；Claude、Gemini 和 GPT-6 用厂商接口。
+4. **对照上限和价格**。计算器的上下文列告诉你输入本身是否超限，费用表告诉你输入加预期输出的成本。请求贴着价格档时要留意：改几个字就可能跨到更贵的档位。
+
+字符数仍然有用：它是发现粘贴被截断的最快方式，也是 CMS 字段和 `maxlength` 属性的单位。它只能说明文本多大，不能说明要花多少 token。
+
+## 延伸阅读
+
+- [tiktoken 的模型对照表](https://github.com/openai/tiktoken/blob/main/tiktoken/model.py)与 OpenAI 的[计数指南](https://developers.openai.com/api/docs/guides/token-counting)
+- Anthropic：[token counting](https://platform.claude.com/docs/en/build-with-claude/token-counting)与[价格](https://platform.claude.com/docs/en/about-claude/pricing)
+- Google：[understand and count tokens](https://ai.google.dev/gemini-api/docs/tokens)
+- DeepSeek：[token 用量说明](https://api-docs.deepseek.com/zh-cn/quick_start/token_usage)与[价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)
+- Sennrich、Haddow、Birch，[Neural Machine Translation of Rare Words with Subword Units](https://aclanthology.org/P16-1162/)（ACL 2016），BPE 原论文
+- 相关工具：[字数统计工具](/zh/tools/word-counter/)、[JSON 格式化工具](/zh/tools/json-formatter/)、[jq 在线测试](/zh/tools/jq-playground/)、[API Key 脱敏工具](/zh/tools/secret-redactor/)

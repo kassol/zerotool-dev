@@ -1,85 +1,184 @@
 ---
-title: "QR Code Decoder Online: Read QR Codes from Images Instantly"
-description: "Decode QR codes from any image file in your browser. Extract URLs, Wi-Fi credentials, vCards, and text without uploading to a server. Free, private, instant."
+title: "QR Code Decoder: What the Pattern Holds and How It Is Read"
+description: "How a QR code is built, how much it holds at each error correction level, how a browser decodes an image with zxing-wasm, and why some codes fail."
 pubDate: 2026-04-16
+updatedDate: 2026-11-03
 lang: "en"
-draft: true
-tags: ["qr-code", "qr-code-decoder", "qr-code-scanner", "developer-tools"]
+tags: ["qr-code", "qr-code-decoder", "qr-code-generator", "error-correction", "iso-18004"]
 ---
 
-You received a screenshot with a QR code. You found a QR code in a document but don't have your phone handy. You want to verify what a QR code encodes before scanning it. A QR code decoder online handles all of these without installing anything.
+A QR code is a grid of light and dark modules that stores bytes, not a link. A reader has to find the symbol in the image, correct for angle and scale, read the modules in the right order, undo the mask, check the Reed–Solomon codewords and return the bytes. Most failures in this article come from one of those steps.
 
-[Decode a QR code now →](/tools/qr-code-decoder)
+The [QR Code Reader](/tools/qr-code-decoder/) on this site runs that pipeline in the page with zxing-wasm, the ZXing C++ library compiled to WebAssembly. This guide covers what the pattern contains, how much fits at each error correction level, how the character set is decided, what Wi-Fi and vCard payloads mean, and where decoding breaks.
 
-## Why Decode a QR Code Online
+## The Pattern: Finders, Timing and Alignment
 
-Scanning with a phone works when you're physically present with a printed code. It doesn't work when the code lives in:
+ISO/IEC 18004:2006 defines the symbol. Several parts carry no user data:
 
-- A screenshot or photo
-- A PDF or presentation slide
-- An email or chat message
-- An image file on your desktop
+- **Finder patterns.** Three 7×7 squares at the top left, top right and bottom left. A reader uses them to locate the symbol and its rotation. The fourth corner has no finder, which is how the reader tells the orientation.
+- **Timing patterns.** A row and a column of alternating modules, at row 6 and column 6. They let the reader count module positions between the finders.
+- **Alignment patterns.** 5×5 squares placed across the symbol from version 2 upward. Version 1 has none. They correct the grid when the image is photographed at an angle.
+- **Format information.** The error correction level and the mask pattern, written twice near the finders so one copy can survive damage.
+- **Data and error correction codewords.** The rest of the symbol, placed in a zigzag and XORed with a mask pattern.
 
-More importantly, decoding first lets you **see what a QR code links to before you visit it**. Phishing attacks increasingly use QR codes precisely because most people scan without thinking. Reading the encoded content first is the safer workflow.
+Around all of it sits the **quiet zone**: a light margin four modules wide on every side (ISO/IEC 18004:2006, §5.3.7). Without it, a reader can mistake nearby dark content for part of the code. This is why a code pasted tight against text or a photo border sometimes fails while the same code with white space reads.
 
-## How to Use the QR Code Decoder
+The size is counted in versions. Version 1 is 21×21 modules; each version adds four modules per side, up to version 40 at 177×177.
 
-1. Open the [QR Code Decoder](/tools/qr-code-decoder)
-2. Drop an image file onto the tool, or click to upload
-3. The tool reads the image and displays the decoded content immediately
+| Version | Modules | Typical use in this site's generator |
+|---|---|---|
+| 1 | 21×21 | A short upper-case URL at level L |
+| 2 | 25×25 | `https://zerotool.dev` at level M |
+| 5 | 37×37 | The same contact as MECARD |
+| 8 | 49×49 | The same contact as vCard 3.0 |
+| 40 | 177×177 | The maximum payload at level L |
 
-Supported input: PNG, JPG, JPEG, GIF, WebP, BMP, and most other common image formats. There is no file size limit imposed by the tool itself — browser memory is the practical constraint.
+## Four Modes and What Each Character Costs
 
-The result panel shows the raw encoded string. If it's a URL, you can inspect the full address before deciding whether to open it.
+QR does not encode text directly. The encoder splits the message into segments and picks a mode for each one:
 
-## What QR Codes Can Contain
+| Mode | Alphabet | Cost |
+|---|---|---|
+| Numeric | `0`–`9` | 10 bits per 3 digits |
+| Alphanumeric | `0`–`9`, `A`–`Z`, space and `$ % * + - . / :` | 11 bits per 2 characters |
+| Byte | any byte | 8 bits per byte |
+| Kanji | JIS X 0208 characters | 13 bits per character |
 
-QR codes encode arbitrary text. The content type determines what action a scanner app takes:
+A symbol can switch modes between segments (ISO/IEC 18004:2006, §6.3.6). That is why a URL with an upper-case host and a lower-case path can mix alphanumeric and byte segments. The generator picks the split that uses the fewest bits and reports it in the status line.
 
-| Type | Format | What Apps Do |
-|------|--------|--------------|
-| URL | `https://example.com` | Open in browser |
-| Wi-Fi | `WIFI:T:WPA;S:Network;P:pass;;` | Prompt to connect |
-| Email | `mailto:user@example.com` | Open mail client |
-| Phone | `tel:+1234567890` | Open dialer |
-| SMS | `sms:+1234567890?body=Hi` | Open SMS app |
-| vCard | `BEGIN:VCARD...END:VCARD` | Add to contacts |
-| Location | `geo:37.77,-122.41` | Open maps |
-| Plain text | Any string | Display the text |
+Three results from the [QR Code Generator](/tools/qr-code-generator/) show the difference:
 
-The decoder shows you the raw string. If it's a `WIFI:` string, you can see the password. If it's a `BEGIN:VCARD` block, you can read all the contact fields before adding them.
+- `https://zerotool.dev` at level M is **version 2, 25×25 modules, 172 of 224 data bits (77%)**, encoded as 20 bytes in byte mode.
+- `HTTPS://ZEROTOOL.DEV` at level L is **version 1, 21×21**, because upper-case letters fit the alphanumeric mode; the lower-case form needs version 2. Scheme and host are case-insensitive ([RFC 3986 §3.1 and §3.2.2](https://www.rfc-editor.org/rfc/rfc3986#section-3.1)), so this substitution is safe up to the first `/` of the path. Paths and query strings can be case-sensitive.
+- 2,400 characters of plain text at level M need **19,220 data bits**; version 40 at level M holds 18,672, which is 69 bytes too many. The same text fits at level L. The generator does not cut the text to make it fit.
 
-## Privacy: Why Client-Side Processing Matters
+Byte mode is where most non-Latin text lands. A Chinese, Japanese or Korean character usually takes 3 bytes in UTF-8, and a character outside the Basic Multilingual Plane takes 4. The 2,953-byte limit is bytes, not characters.
 
-Most file-processing tools upload your content to their servers. For QR codes, this means your image — which might contain a Wi-Fi password, a private contact, or a sensitive document reference — leaves your machine.
+## Versions, Error Correction and Capacity
 
-The QR Code Decoder on zerotool.dev processes everything in your browser using the JavaScript QR decoding library. Your image never leaves your device. This is verifiable: watch the network tab in DevTools — no upload requests are made after you drop the file.
+QR has four error correction levels. They are usually described by the share of codewords that can be lost:
 
-This matters especially for:
-- QR codes containing Wi-Fi credentials
-- Internal document links that shouldn't be exposed externally
-- QR codes on confidential materials
+| Level | Recoverable codewords, about | When it fits |
+|---|---|---|
+| L | 7% | Clean screens, short links |
+| M | 15% | The general default |
+| Q | 25% | Surfaces that get handled or scratched |
+| H | 30% | Small prints, logos, industrial labels |
 
-## Tips for Better Decoding
+The codewords are computed with Reed–Solomon coding over GF(256), and the blocks are interleaved so a scratch does not destroy one whole block. Error correction restores damaged codewords; it is not encryption, and it cannot recover a code damaged beyond its level.
 
-**Image quality matters.** The decoder works best with clear, undistorted images. Blurry photos, heavy compression artifacts, or extreme angles can cause decoding to fail.
+Raising the level adds error correction codewords, so the same text may need a larger version. A denser symbol then needs more pixels per module when printed or photographed, which can cancel the benefit. Pick the level from the surface, then check the physical size.
 
-**Crop tightly if possible.** An image containing just the QR code (with a small margin around it) decodes more reliably than a wide-angle photo where the code occupies a small portion of the frame.
+The capacities at the top end, version 40 level L, are:
 
-**QR codes are surprisingly resilient.** The QR standard includes error correction — codes can be decoded even when up to 30% of the pattern is obscured or damaged (depending on the error correction level used when the code was created). If a code looks partially covered, try decoding it anyway.
+| Mode | Capacity |
+|---|---|
+| Numeric | 7,089 digits |
+| Alphanumeric | 4,296 characters |
+| Byte | 2,953 bytes |
+| Kanji | 1,817 characters |
 
-**Screenshots decode well.** A screenshot of a QR code on a screen is usually higher quality than a phone photo of a printed code. Screenshot-based decoding almost always works.
+These are maximums for one mode. Mixed content uses the segment costs above and usually fits less.
 
-**Try different crops if decoding fails.** Sometimes a slightly different crop that excludes glare, shadows, or interfering elements makes the difference.
+## ECI and Character Sets
 
-## Related Tool: Generate QR Codes
+A QR code stores bytes. It can declare their character set with an Extended Channel Interpretation (ECI) header, defined in ISO/IEC 18004. Common assignments are ECI 20 for Shift_JIS and ECI 26 for UTF-8; the reader also knows Big5, GB2312, GBK, GB18030, EUC-KR and the ISO-8859 series.
 
-If you need to create QR codes rather than decode them, the companion tool handles that:
+Most generators do not write an ECI header. The 2006 edition of the standard names ISO/IEC 8859-1 as the default for byte mode, and many encoders simply write UTF-8 bytes without saying so. A reader therefore has to guess:
 
-[Create QR codes →](/tools/qr-code-generator)
+1. If there is an ECI header, use the declared encoding and label it, for example `UTF-8 (ECI 26)`.
+2. Without ECI, valid UTF-8 is read as UTF-8.
+3. Otherwise the page tries its own language's legacy encoding first: Shift_JIS on the Japanese page, GB18030 on the Chinese page, EUC-KR on the Korean page.
+4. If that fails, it follows [ZXing's guessing rule](https://github.com/zxing/zxing/blob/master/core/src/main/java/com/google/zxing/common/StringUtils.java): UTF-16 from a BOM, then Shift_JIS, then ISO-8859-1.
 
-It supports all the same content types — URLs, Wi-Fi credentials, vCards, plain text, and more — with error correction level selection and PNG/SVG download.
+The card marks a guess as `(guessed)`. The **Text encoding** menu re-decodes the same bytes as UTF-8, Shift_JIS, GB18030/GBK, Big5, EUC-KR, ISO-8859-1, UTF-16BE or UTF-16LE. Bytes that are not text in any of these get a **Binary** badge and open as hexadecimal.
 
----
+Measured examples from the reader's own tests:
 
-Paste your image and read the code in under two seconds. [Open the QR Code Decoder →](/tools/qr-code-decoder)
+- A code holding the Shift_JIS bytes of `東京都千代田区丸の内 カフェ` decoded correctly and was labelled `Shift_JIS (guessed)`.
+- GBK bytes for `你好，世界。二维码测试` were guessed as ISO-8859-1 on the English page, as ZXing does, and read correctly after choosing GB18030.
+
+## How the Browser Reads an Image
+
+The page uses zxing-wasm 3.1.4, which packages ZXing C++ as WebAssembly. The script and module are served from this site's `/vendor` directory, not from a CDN, and load on first use: about 420 KB with gzip, or 967 KiB uncompressed. The transfer size depends on compression and caching.
+
+Decoding runs in the page. For a file, a pasted screenshot or a camera frame, the image bytes are not uploaded to this site. That statement covers the decoding path only; the page also loads analytics and ads, and URL mode fetches the image from the address you enter. The privacy section below lists what leaves the page.
+
+What the reader does with the image:
+
+- Reads up to **16 codes** per image and numbers them from the top left, row by row. The numbers drawn on the preview match the result cards.
+- Reads the QR family: QR, Micro QR and rMQR.
+- Tries inverted codes, rotated codes and codes with little or no white margin.
+- Decodes at full resolution up to **16,777,216 pixels**. Larger images are scaled down first and the status line says so. Browser canvas limits still vary by device and version.
+- Keeps the image local; the camera path uses `getUserMedia`, prefers the rear camera and decodes frames on the device.
+
+The resolution rule of thumb from the 2026-09-30 test: a 33-module code failed at 45×45 pixels and read at 60×60, so plan on roughly 1.5 image pixels per module. A 4000×3000 phone-style photo with a small code took about 1.2 s in desktop Chromium.
+
+## Structured Payloads: Wi-Fi, Contacts, Mail, SMS and Maps
+
+The decoded bytes are text, and the first few characters decide how scanners treat it. The reader parses the same prefixes and shows fields instead of one long string:
+
+| Prefix | Parsed as | Reference |
+|---|---|---|
+| `http://` or `https://` | A link, with the real host and warnings | — |
+| `WIFI:` | Network name, password, security type, hidden flag | [ZXing: Barcode Contents](https://github.com/zxing/zxing/wiki/Barcode-Contents) |
+| `BEGIN:VCARD` | vCard contact | [RFC 2426](https://www.rfc-editor.org/rfc/rfc2426) (September 1998) |
+| `MECARD:` | NTT DOCOMO's compact contact format | [DOCOMO's format table](https://web.archive.org/web/20160304025131/https://www.nttdocomo.co.jp/english/service/developer/make/content/barcode/function/application/addressbook/index.html) |
+| `mailto:` | To, Cc, subject, body | [RFC 6068](https://www.rfc-editor.org/rfc/rfc6068) (October 2010) |
+| `tel:` | Phone number | [RFC 3966](https://www.rfc-editor.org/rfc/rfc3966) (December 2004) |
+| `sms:` or `SMSTO:` | Number and message | [RFC 5724](https://www.rfc-editor.org/rfc/rfc5724) (January 2010); `SMSTO:` is the ZXing form |
+| `geo:` | Latitude, longitude, altitude, map link | [RFC 5870](https://www.rfc-editor.org/rfc/rfc5870) (June 2010) |
+| Any other `scheme:` | Text only, with a note that an app handles it | — |
+
+A Wi-Fi payload is one line: `WIFI:T:WPA;S:CafeGuest;P:example-pass;;`. ZXing escapes `\`, `;`, `,`, `"` and `:` with a backslash, and Android's parser removes those backslashes again. The Wi-Fi Alliance later wrote the same URI into [WPA3 Specification v3.5](https://www.wi-fi.org/system/files/WPA3%20Specification%20v3.5.pdf) (section 7), where every password network uses `T:WPA` and `R:1` marks WPA3-Personal only; the [Wi-Fi QR Code Generator](/tools/wifi-qr-code-generator/) writes that form and checks the field limits before drawing. The reader shows the fields and keeps the raw text one click away; it does not join the network.
+
+A vCard code stores the contact as a text block. RFC 2426 defines the escaping, and the reader shows name, organization, phone, email, address, URL and note before you add anything to a contact list. MECARD is smaller and has no company or job title field.
+
+`mailto:`, `tel:`, `sms:` and `geo:` follow their RFCs; the reader splits the fields but does not open the mail client, dial, send a message or start navigation. Only `http` and `https` become clickable links, and only when you click them. Payloads such as `javascript:`, `data:`, `vbscript:` and `file:` are shown as text with a warning.
+
+Two tricks are worth checking before you open a decoded link, and the reader flags both:
+
+- `https://citypark.example.gov@pay-meter.example.net/zone/4471` looks like a city domain. Everything before `@` is a user name, and the host line says `pay-meter.example.net`.
+- `https://exаmple.com/login` with a Cyrillic `а` is shown as `xn--exmple-4nf.com` with a look-alike warning.
+
+## Why a Code Fails to Decode
+
+No decoder reads every image. When one fails, the cause is usually visible in the source:
+
+- **Too few pixels per module.** A 33-module code failed at 45×45 pixels and read at 60×60 in the 2026-09-30 test, which works out to roughly 1.5 image pixels per module. Cropping a small code out of a large photo helps only if the crop keeps enough resolution.
+- **Blur and glare.** Motion blur, a fingerprint on a lens and a reflection across the code all remove the light/dark difference the reader needs. A second photo from a different angle often works.
+- **Low contrast.** A gray-on-gray code may read while a faded print does not. The generator warns below a 40% luminance difference, the lower bound of grade C for symbol contrast in ISO/IEC 15415.
+- **Inversion.** White modules on black are allowed by the standard (reflectance reversal, §5.2) and zxing-cpp reads them, but some phone apps do not try the inverted image. If a phone refuses a code that the reader accepts, inversion is one explanation.
+- **Several codes in one frame.** The reader handles up to 16, but overlapping codes, a code cut by the image edge, or one code printed on top of another can leave none readable.
+- **Damage beyond the error correction level.** Level H can lose about 30% of its codewords; beyond that the message is gone. A code with a large logo or a torn corner may still read, or may not.
+- **Bytes that are not text in the guessed encoding.** This is the garbled-text case above, not a failed decode. The bytes were read; the character set was wrong.
+- **A format the browser cannot display.** PDFs need a screenshot first. HEIC works only where the browser displays it, which usually means Safari.
+- **URL mode without CORS.** When you give the reader an image address, the image host must allow cross-origin requests. If it does not, save the image and drop the file in.
+
+If a code fails here, try a sharper source, a tighter crop or a different decoder before concluding that the code is invalid. A code that no reader can read is possible; a code that one reader cannot read is common.
+
+## Privacy: What Leaves the Page
+
+For a local file, a pasted screenshot or a camera frame, the image is decoded in the page. The image and the decoded text are not uploaded to this site, and the reader does not write them to browser storage. The decoder script and WebAssembly module are fetched from this site's `/vendor` directory on first use, so the page does need a network connection for that request. **Clear** or Ctrl/⌘+L removes the result and stops the camera.
+
+Other requests are separate from decoding:
+
+- **URL mode** requests the image from the address you type, without cookies or a referrer. That host sees the request, and its own logging policy applies.
+- **Opening a decoded link, map, mail address, phone number or SMS** contacts that destination or opens the app you have configured.
+- **The page loads Google Analytics and AdSense.** Analytics collects standard page and device information and records tool events: camera requests, image source, result type, encoding changes and opening a link. Events contain the tool name and the action, not the image or the decoded text. A copy event is recorded only after a current result is copied successfully.
+
+So the decoded content stays in the page for the life of the tab, but the page is not an offline-only reader: it loads the decoder, analytics and ads. The network panel shows which requests happen, and the URL mode and link warnings above explain the ones that leave the browser.
+
+## Generate, Print and Check
+
+Reading and writing use the same standard, so the limits are easier to see from the generator side. The [QR Code Generator](/tools/qr-code-generator/) makes static codes: the content sits in the pattern, with no redirect through this site and nothing to expire. It offers:
+
+- Text or URL, contact, email, phone, SMS and location templates, with the Wi-Fi tab pointing to the [Wi-Fi QR Code Generator](/tools/wifi-qr-code-generator/).
+- Error correction L, M, Q or H, PNG from 256 to 4096 px, and SVG. PNG modules are whole pixels: a version 2 code with its quiet zone is 33 modules wide, so 1024 px becomes 1023 px at 31 px per module.
+- A default quiet zone of four modules, with smaller margins available and a warning.
+- Capacity errors that state how many bits are needed, how many fit, and whether a lower error correction level would work.
+- Kanji mode for JIS X 0208 characters, off by default because not every reader was tested with it.
+
+The same contact as vCard 3.0 needs version 8 (49×49) at level M; as MECARD it fits in version 5 (37×37). Logo overlays, dot styles, gradients and frames are not offered, because they cover modules and rely on error correction to survive.
+
+Before printing a code, scan the exported file with the phone you expect people to use, then decode the same file with the [QR Code Reader](/tools/qr-code-decoder/). That catches a wrong template, a quiet zone that is too small and a print size that leaves too few pixels per module. For barcodes rather than QR codes, use the [Barcode Generator](/tools/barcode-generator/); it makes EAN-13, EAN-8, UPC-A, Code 128, Code 39, ITF-14 and Codabar, and the QR reader does not read them.
