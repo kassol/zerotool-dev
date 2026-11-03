@@ -53,6 +53,7 @@ let passes = 0;
 let failures = 0;
 let skips = 0;
 function check(name, ok, detail) {
+
   if (ok) passes++;
   else { failures++; console.log('FAIL: ' + name + (detail !== undefined ? ' — ' + detail : '')); }
 }
@@ -780,6 +781,9 @@ throwsCode('second item not an object', () => E.jsonToTable([{ a: 1 }, 2]), 'jso
     check(lang + ' page: a text drop is not taken over', !prevented);
   }
 }
+
+check('large grids are appended in bounded chunks',
+  /const GRID_CHUNK = 50;/.test(source) && /function laterTask/.test(source) && /if \(my !== gridGen\) return;/.test(source));
 
 console.log(`\n${passes} passed, ${failures} failed, ${skips} skipped`);
 process.exit(failures ? 1 : 0);

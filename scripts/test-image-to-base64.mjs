@@ -62,6 +62,7 @@ const STRINGS = new Function('return ' + stringsSrc)();
 let failures = 0;
 let passes = 0;
 function check(name, ok, detail) {
+
   if (ok) { passes++; return; }
   failures++;
   console.log('FAIL: ' + name + (detail !== undefined ? ' — ' + detail : ''));
@@ -461,6 +462,9 @@ for (const api of ['localStorage', 'sessionStorage', 'ztPersist', 'indexedDB', '
     }
   }
 }
+
+check('large files skip the full Base64 until Copy or Download asks for it',
+  /var LAZY_LIMIT = 2 \* 1024 \* 1024;/.test(source) && /function materialize\(\)/.test(source) && /function encodeFile\(file\)/.test(source) && /var lazy = !svg && file.size > LAZY_LIMIT;/.test(source));
 
 console.log(`${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

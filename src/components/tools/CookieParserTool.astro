@@ -96,6 +96,8 @@ const STRINGS = {
       hmlpvt: 'Baidu Tongji: the visitor’s current visit time.'
     },
     setTitle: 'Set-Cookie · {n} · {stored} kept · {del} deleted · {rejected} rejected',
+    setShown: 'Showing {shown} of {total} cards',
+    setMore: 'Show more',
     verdict: { stored: 'Kept', delete: 'Deletes', rejected: 'Rejected', unknown: 'Not verified' },
     editInBuilder: 'Edit in builder',
     fDomain: 'Domain',
@@ -319,6 +321,8 @@ const STRINGS = {
       hmlpvt: '百度统计：访客当前访问时间。'
     },
     setTitle: 'Set-Cookie · {n} 个 · 保存 {stored} · 删除 {del} · 拒收 {rejected}',
+    setShown: '已显示 {shown} / {total} 张卡片',
+    setMore: '显示更多',
     verdict: { stored: '保存', delete: '删除', rejected: '拒收', unknown: '未核实' },
     editInBuilder: '在生成器里编辑',
     fDomain: 'Domain',
@@ -542,6 +546,8 @@ const STRINGS = {
       hmlpvt: 'Baidu 統計（百度统计）：今回の訪問時刻。'
     },
     setTitle: 'Set-Cookie · {n} 件 · 保存 {stored} · 削除 {del} · 拒否 {rejected}',
+    setShown: '{total} 件中 {shown} 件を表示',
+    setMore: 'さらに表示',
     verdict: { stored: '保存', delete: '削除', rejected: '拒否', unknown: '未確認' },
     editInBuilder: 'ビルダーで編集',
     fDomain: 'Domain',
@@ -765,6 +771,8 @@ const STRINGS = {
       hmlpvt: 'Baidu 통계(百度统计): 현재 방문 시각.'
     },
     setTitle: 'Set-Cookie · {n}개 · 저장 {stored} · 삭제 {del} · 거부 {rejected}',
+    setShown: '카드 {shown} / {total}개 표시',
+    setMore: '더 보기',
     verdict: { stored: '저장', delete: '삭제', rejected: '거부', unknown: '확인 못 함' },
     editInBuilder: '생성기에서 편집',
     fDomain: 'Domain',
@@ -2033,7 +2041,21 @@ const { tips: TIPS, copyNote: COPY_NOTE, ...CLIENT_T } = T;
       var counts = { stored: 0, delete: 0, rejected: 0, unknown: 0 };
       analyses.forEach(function (a) { counts[a.verdict]++; });
       sec.appendChild(el('h3', 'ck-h', fmt(S.setTitle, { n: analyses.length, stored: counts.stored, del: counts.delete, rejected: counts.rejected }) + (counts.unknown ? ' \u00b7 ' + fmt(S.unknownCount, { n: counts.unknown }) : '')));
-      analyses.forEach(function (a, i) {
+
+      // A thousand Set-Cookie lines are a thousand cards with a dozen fields each.
+      // Build the first page now and the rest on request, so the first result stays
+      // interactive. The parsed list, the JSON copy and the simulation use every line.
+      var PAGE = 50, STEP = 200, shown = 0;
+      var footer = el('div', 'ck-more');
+      var countEl = el('span', 'ck-muted', '');
+      var moreBtn = el('button', 'btn-ghost btn-sm', S.setMore);
+      moreBtn.type = 'button';
+      footer.appendChild(countEl);
+      footer.appendChild(moreBtn);
+      if (analyses.length > PAGE) sec.appendChild(footer);
+      moreBtn.addEventListener('click', function () { appendCards(STEP); });
+
+      function setCard(a) {
         var card = el('article', 'ck-card ck-card-' + a.verdict);
         var head = el('div', 'ck-card-head');
         head.appendChild(el('code', 'ck-name', a.name ? showChar(a.name) : S.emptyName));
@@ -2076,8 +2098,18 @@ const { tips: TIPS, copyNote: COPY_NOTE, ...CLIENT_T } = T;
         }
         var iss = a.issues.slice().sort(function (x, y) { return sevRank(x.sev) - sevRank(y.sev); });
         if (iss.length) card.appendChild(issueList(iss));
-        sec.appendChild(card);
-      });
+        return card;
+      }
+
+      function appendCards(n) {
+        var frag = document.createDocumentFragment();
+        var end = Math.min(analyses.length, shown + n);
+        for (; shown < end; shown++) frag.appendChild(setCard(analyses[shown]));
+        if (footer.parentNode) sec.insertBefore(frag, footer); else sec.appendChild(frag);
+        countEl.textContent = fmt(S.setShown, { shown: shown, total: analyses.length });
+        footer.hidden = shown >= analyses.length;
+      }
+      appendCards(PAGE);
       return { section: sec, analyses: analyses };
     }
     function sevRank(s) { return s === 'error' ? 0 : s === 'warn' ? 1 : 2; }
@@ -2254,10 +2286,17 @@ const { tips: TIPS, copyNote: COPY_NOTE, ...CLIENT_T } = T;
       b.addEventListener('click', function () {
         mode = b.getAttribute('data-mode');
         modeBtns.forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+        clearTimeout(inputTimer);
         render(false);
       });
     });
-    inputEl.addEventListener('input', function () { render(false); });
+    // A long Set-Cookie paste arrives as many input events in one task (one per line in
+    // some browsers). Parse once after the typing stops instead of on every event.
+    var inputTimer = null;
+    inputEl.addEventListener('input', function () {
+      clearTimeout(inputTimer);
+      inputTimer = setTimeout(function () { render(false); }, 150);
+    });
     [decodeEl, splitEl, jsonFmtEl].forEach(function (x) { x.addEventListener('change', function () { render(false); }); });
     simResp.addEventListener('input', function () { render(false); });
     [simReq, simCtx].forEach(function (x) { x.addEventListener('input', runSim); x.addEventListener('change', runSim); });
@@ -2265,21 +2304,24 @@ const { tips: TIPS, copyNote: COPY_NOTE, ...CLIENT_T } = T;
     inputEl.addEventListener('focus', ensurePsl, { once: true });
     $('ck-ex-cookie').addEventListener('click', function () {
       inputEl.value = S.exampleCookie; simResp.value = ''; simReq.value = '';
+      clearTimeout(inputTimer);
       setMode('auto'); render(true);
     });
     $('ck-ex-set').addEventListener('click', function () {
       inputEl.value = S.exampleSet; simResp.value = S.exampleRespUrl; simReq.value = S.exampleReqUrl;
+      clearTimeout(inputTimer);
       simBox.open = true;
       setMode('auto'); render(true);
     });
     $('ck-clear').addEventListener('click', function () {
       inputEl.value = ''; simResp.value = ''; simReq.value = '';
+      clearTimeout(inputTimer);
       render(false); inputEl.focus();
     });
     function setMode(m) { mode = m; modeBtns.forEach(function (x) { x.setAttribute('aria-pressed', x.getAttribute('data-mode') === m ? 'true' : 'false'); }); }
     /* ToolLayout clears text inputs on Ctrl/⌘+L; re-render once it has. */
     document.addEventListener('keydown', function (e) {
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) setTimeout(function () { render(false); buildRender(); }, 0);
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) setTimeout(function () { clearTimeout(inputTimer); render(false); buildRender(); }, 0);
     });
 
     // ---- builder ----
@@ -2381,6 +2423,8 @@ const { tips: TIPS, copyNote: COPY_NOTE, ...CLIENT_T } = T;
   .ck-out { display: flex; flex-direction: column; gap: 0.9rem; min-width: 0; }
   .ck-out:empty { display: none; }
   .ck-out :global(.ck-section) { display: flex; flex-direction: column; gap: 0.55rem; min-width: 0; }
+  .ck-wrap :global(.ck-more) { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.8rem; }
+  .ck-wrap :global(.ck-more[hidden]) { display: none; }
   .ck-out :global(.ck-h) { font-size: 0.95rem; margin: 0; color: var(--color-text); }
   .ck-wrap :global(.ck-callout) {
     margin: 0; font-size: 0.82rem; line-height: 1.5; padding: 0.5rem 0.7rem; border-radius: var(--radius-sm);

@@ -1413,6 +1413,7 @@ const ACTIONS = [['rowAbove', L.rowAbove], ['rowBelow', L.rowBelow], ['deleteRow
   }
 
   function renderGrid() {
+    const my = ++gridGen;
     const cols = table.headers.length;
     thead.textContent = '';
     tbody.textContent = '';
@@ -1449,25 +1450,57 @@ const ACTIONS = [['rowAbove', L.rowAbove], ['rowBelow', L.rowBelow], ['deleteRow
       headRow.appendChild(th);
     }
     thead.appendChild(headRow);
-    const frag = document.createDocumentFragment();
     const shown = Math.min(table.rows.length, GRID_LIMIT);
-    for (let r = 0; r < shown; r++) {
-      const tr = document.createElement('tr');
-      const rn = document.createElement('th');
-      rn.className = 'mdt-rn';
-      rn.scope = 'row';
-      rn.textContent = String(r + 1);
-      tr.appendChild(rn);
-      for (let c = 0; c < cols; c++) {
-        const td = document.createElement('td');
-        td.className = 'mdt-td';
-        td.appendChild(makeCell(r, c, table.rows[r][c] == null ? '' : table.rows[r][c]));
-        tr.appendChild(td);
-      }
-      frag.appendChild(tr);
+    // A thousand rows of contenteditable cells take about a second to build. Small
+    // tables are built in one go so callers and tests see them immediately; large ones
+    // are appended in bounded chunks, each in its own task.
+    if (shown <= 200) {
+      const frag = document.createDocumentFragment();
+      for (let r = 0; r < shown; r++) frag.appendChild(gridRow(r));
+      tbody.appendChild(frag);
+      markCurrent();
+      return;
     }
-    tbody.appendChild(frag);
-    markCurrent();
+    let next = 0;
+    const addChunk = () => {
+      if (my !== gridGen) return;
+      const frag = document.createDocumentFragment();
+      const end = Math.min(shown, next + GRID_CHUNK);
+      for (; next < end; next++) frag.appendChild(gridRow(next));
+      tbody.appendChild(frag);
+      markCurrent();
+      if (next < shown) laterTask(addChunk);
+    };
+    addChunk();
+  }
+
+  const GRID_CHUNK = 50;
+  let gridGen = 0;
+
+  function laterTask(fn: () => void) {
+    const s = (window as any).scheduler;
+    if (s && typeof s.postTask === 'function') {
+      s.postTask(fn, { priority: 'user-blocking' }).catch(() => setTimeout(fn, 0));
+    } else {
+      setTimeout(fn, 0);
+    }
+  }
+
+  function gridRow(r: number) {
+    const tr = document.createElement('tr');
+    const rn = document.createElement('th');
+    rn.className = 'mdt-rn';
+    rn.scope = 'row';
+    rn.textContent = String(r + 1);
+    tr.appendChild(rn);
+    const cols = table.headers.length;
+    for (let c = 0; c < cols; c++) {
+      const td = document.createElement('td');
+      td.className = 'mdt-td';
+      td.appendChild(makeCell(r, c, table.rows[r][c] == null ? '' : table.rows[r][c]));
+      tr.appendChild(td);
+    }
+    return tr;
   }
 
   function cellEl_(r: number, c: number) {

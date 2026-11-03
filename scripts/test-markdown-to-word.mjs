@@ -50,17 +50,11 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const commonStyle = readFileSync(join(root, 'src/styles/tool-common.css'), 'utf8');
 const source = readFileSync(join(root, 'src/components/tools/MarkdownToWordTool.astro'), 'utf8');
 
-const START_MARK = '/* ── engine:start ── */';
-const END_MARK = '/* ── engine:end ── */';
-const startIndex = source.indexOf(START_MARK);
-const endIndex = source.indexOf(END_MARK);
-if (startIndex < 0 || endIndex <= startIndex) {
-  console.error('FAIL: could not locate the engine block in MarkdownToWordTool.astro');
-  process.exit(1);
-}
-const block = source.slice(startIndex, endIndex);
+// The engine now lives in its own module so the export Worker runs the same code.
+const enginePath = join(root, 'src/components/tools/markdown-to-word-engine.js');
+const block = readFileSync(enginePath, 'utf8').replace(/^export \{[^}]*\};\s*$/m, '');
 const E = new Function(block + `
-return { parseMarkdown, collectImageUrls, exportDocx, buildDocx, renderHtml, firstHeadingText,
+return { parseMarkdown, collectImageUrls, exportDocx, prepareImages, buildDocx, renderHtml, firstHeadingText,
   safeFilename, paperFor, defaultPaper, defaultFontFor, FONT_PRESETS, sniffImage, decodeDataUri, fitImage };`)();
 const S_START = source.indexOf('/* ── strings:start ── */');
 const S_END = source.indexOf('/* ── strings:end ── */');
@@ -526,7 +520,7 @@ const PNG_DATA_URI = 'data:image/png;base64,' + Buffer.from(PNG_1x1).toString('b
     /class="mw-privacy">[\s\S]*?<\/p>\s*<p id="mw-embed-note" class="mw-embed-note" hidden>\{S\.embedRemoteNote\}<\/p>/.test(markup) &&
     source.includes('.mw-embed-note[hidden] { display: none; }'));
   check('the network note names the IP address in every language', ['en', 'zh', 'ja', 'ko'].every((l) => /\bIP\b/.test(E.STRINGS[l].embedRemoteNote) && /http\(s\)/.test(E.STRINGS[l].embedRemoteNote)));
-  const script = source.slice(source.indexOf('/* ── engine:end ── */'), source.lastIndexOf('</script>'));
+  const script = source.slice(source.lastIndexOf('<script>'), source.lastIndexOf('</script>'));
   check('the note follows the switch: on load, on change, on Clear and on Ctrl/Cmd+L',
     script.includes('function syncEmbedNote() { embedNote.hidden = !embedRemoteBox.checked; }') &&
     /embedRemoteImages === true;\s*syncEmbedNote\(\);/.test(script) &&
@@ -535,7 +529,7 @@ const PNG_DATA_URI = 'data:image/png;base64,' + Buffer.from(PNG_1x1).toString('b
   check('the embed switch still starts from the saved value only', source.includes("embedRemoteBox.checked = ((window as any).ztPersist?.load(SLUG) || {}).embedRemoteImages === true;"));
   // ToolLayout's Ctrl/Cmd+L empties the editor without an input event; the tool drops the preview, status and switch state.
   check('Ctrl/Cmd+L refreshes the preview and clears the status and the switch',
-    /e\.key !== 'l' && e\.key !== 'L'\)\) return;\s*setTimeout\(\(\) => \{\s*if \(editor\.value\) return;\s*clearTimeout\(timer\);\s*embedRemoteBox\.checked = false;\s*syncEmbedNote\(\);\s*setStatus\(''\);\s*refresh\(\);/.test(source));
+    /e\.key !== 'l' && e\.key !== 'L'\)\) return;\s*setTimeout\(\(\) => \{\s*if \(editor\.value\) return;\s*clearTimeout\(timer\);\s*docSource = '';\s*largeDoc = false;[\s\S]*?embedRemoteBox\.checked = false;\s*syncEmbedNote\(\);\s*setStatus\(''\);\s*refresh\(\);/.test(source));
   const style = source.slice(source.lastIndexOf('\n<style>\n'));
   check('stacking breakpoint is 860px, phone details at 640px', (style.match(/@media \((?:max|min)-width: \d+px\)/g) || []).join() === '@media (max-width: 860px),@media (max-width: 640px)');
   check('a long document scrolls inside the preview', source.includes('class="mw-preview zt-io-fill"') && /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(commonStyle) && /\.mw-preview \{\s*overflow: auto;/.test(style) && !/max-height: 640px|min-height: 420px/.test(style));

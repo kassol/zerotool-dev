@@ -45,6 +45,7 @@ const E = new Function(block + '\nreturn { encodeText, parseBinary, findUtf8Erro
 let failures = 0;
 let passes = 0;
 function check(name, ok, detail) {
+
   if (ok) { passes++; return; }
   failures++;
   console.log('FAIL: ' + name + (detail !== undefined ? ' — ' + detail : ''));
@@ -276,6 +277,9 @@ if (stringsMatch) {
   p.el('tb-binary').value = '2'; p.el('tb-to-text').click();
   eq('GA invalid binary silent', tracks.length, 2);
 }
+
+check('large pastes avoid textarea line-breaking layout (wrap="off" on both boxes)',
+  /<textarea id="tb-text"[^>]*wrap="off"/.test(source) && /<textarea id="tb-binary"[^>]*wrap="off"/.test(source));
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

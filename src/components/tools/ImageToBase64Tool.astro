@@ -22,6 +22,7 @@ const STRINGS = {
     dims: '{w} \u00d7 {h} px',
     sizeLine: '{bytes} \u2192 Base64 {chars} (+{pct}%)',
     tooLong: 'The output is {chars}, too long to show here. Copy and Download .txt still give the full text.',
+    encodingLarge: 'Encoding {size}… The file stays in this tab.',
     copyFailed: 'Copying failed. Select the text in the box and press Ctrl+C (\u2318C).',
     copyFailedLong: 'Copying failed. Use Download .txt.',
     mismatch: 'The file name ends in .{ext}, but the content is {type}. The output uses {mime}.',
@@ -71,6 +72,7 @@ const STRINGS = {
     dims: '{w} \u00d7 {h} 像素',
     sizeLine: '{bytes} \u2192 Base64 {chars}（+{pct}%）',
     tooLong: '输出共 {chars}，太长，不在这里显示。「复制」与「下载 .txt」得到的是完整文本。',
+    encodingLarge: '正在编码 {size}…文件不会离开本标签页。',
     copyFailed: '复制失败。请选中文本框里的内容后按 Ctrl+C（\u2318C）。',
     copyFailedLong: '复制失败，请用「下载 .txt」。',
     mismatch: '文件名是 .{ext}，但内容是 {type}，输出按 {mime}。',
@@ -119,6 +121,7 @@ const STRINGS = {
     dims: '{w} \u00d7 {h} px',
     sizeLine: '{bytes} \u2192 Base64 {chars}（+{pct}%）',
     tooLong: '出力は {chars} あり、長すぎるためここには表示しません。「コピー」と「.txt で保存」では全文を取得できます。',
+    encodingLarge: '{size} をエンコードしています…ファイルはこのタブ内に留まります。',
     copyFailed: 'コピーできませんでした。欄内の文字を選択して Ctrl+C（\u2318C）を押してください。',
     copyFailedLong: 'コピーできませんでした。「.txt で保存」を使ってください。',
     mismatch: 'ファイル名は .{ext} ですが、中身は {type} です。出力は {mime} を使います。',
@@ -167,6 +170,7 @@ const STRINGS = {
     dims: '{w} \u00d7 {h} px',
     sizeLine: '{bytes} \u2192 Base64 {chars} (+{pct}%)',
     tooLong: '출력이 {chars}로 너무 길어 여기에는 표시하지 않습니다. \u2018복사\u2019와 \u2018.txt 저장\u2019으로는 전체 텍스트를 받을 수 있습니다.',
+    encodingLarge: '{size} 인코딩 중… 파일은 이 탭을 벗어나지 않습니다.',
     copyFailed: '복사하지 못했습니다. 입력란의 텍스트를 선택하고 Ctrl+C(\u2318C)를 누르세요.',
     copyFailedLong: '복사하지 못했습니다. \u2018.txt 저장\u2019을 사용하세요.',
     mismatch: '파일 이름의 확장자는 .{ext}이지만 내용은 {type}입니다. 출력 형식은 {mime}입니다.',
@@ -727,28 +731,92 @@ const base64Href = (lang === 'en' ? '' : '/' + lang) + '/tools/base64/';
         list.hidden = !items.length;
       }
 
+      function viewOf() {
+        var uri = state.enc === 'url' ? state.urlUri : state.b64Uri;
+        return { dataUri: uri, base64: state.base64, name: state.fileName, width: state.width, height: state.height };
+      }
+
       function currentText() {
         if (!state) return '';
-        var uri = state.enc === 'url' ? state.urlUri : state.b64Uri;
-        return buildOutput(fmt, { dataUri: uri, base64: state.base64, name: state.fileName, width: state.width, height: state.height });
+        return buildOutput(fmt, viewOf());
+      }
+
+      // The Base64 of an 85 MB file is 113 million characters and is not shown anyway.
+      // Read and encode it only when Copy or Download asks for it, in bounded slices.
+      var LAZY_LIMIT = 2 * 1024 * 1024;
+      function encodeFile(file) {
+        var CHUNK = 3 * 1024 * 1024;
+        var parts = [];
+        var off = 0;
+        return new Promise(function (resolve, reject) {
+          function next() {
+            if (off >= file.size) { resolve(parts.join('')); return; }
+            var slice = file.slice(off, Math.min(file.size, off + CHUNK));
+            off += CHUNK;
+            var reader = new FileReader();
+            reader.onload = function () {
+              var s = String(reader.result);
+              parts.push(s.slice(s.indexOf(',') + 1));
+              next();
+            };
+            reader.onerror = function () { reject(reader.error); };
+            reader.readAsDataURL(slice);
+          }
+          next();
+        });
+      }
+
+      function materialize() {
+        if (!state) return Promise.reject(new Error('no file'));
+        if (state.text != null) return Promise.resolve(state.text);
+        if (state.base64 != null) {
+          state.text = buildOutput(fmt, viewOf());
+          return Promise.resolve(state.text);
+        }
+        if (state.pending) return state.pending;
+        state.pending = encodeFile(state.blob).then(function (b64) {
+          state.base64 = b64;
+          state.b64Uri = dataUriBase64(state.det.mime, b64);
+          state.text = buildOutput(fmt, viewOf());
+          state.pending = null;
+          return state.text;
+        }, function (err) { state.pending = null; throw err; });
+        return state.pending;
+      }
+
+      // Exact length without building the string, for the formats built above.
+      function textLength() {
+        if (!state) return 0;
+        if (state.text != null) return state.text.length;
+        var b64len = state.b64Length;
+        var uri = dataUriBase64(state.det.mime, '').length + b64len;
+        if (fmt === 'base64') return b64len;
+        if (fmt === 'css') return 'background-image: url("'.length + uri + '");'.length;
+        if (fmt === 'html') {
+          var size = state.width > 0 && state.height > 0 ? ' width="' + state.width + '" height="' + state.height + '"' : '';
+          return '<img src="'.length + uri + '"'.length + size.length + ' alt="'.length + escapeHtmlAttr(altFromName(state.fileName)).length + '">'.length;
+        }
+        if (fmt === 'markdown') return '!['.length + altFromName(state.fileName).replace(/([\\\[\]])/g, '\\$1').length + ']('.length + uri + ')'.length;
+        return uri;
       }
 
       function render() {
         if (!state) return;
-        var text = currentText();
-        state.text = text;
+        var text = state.text != null ? state.text : (state.base64 != null ? buildOutput(fmt, viewOf()) : '');
+        if (state.base64 != null) state.text = text;
+        var len = textLength();
         outLabel.textContent = FMT_LABEL[fmt];
-        outLen.textContent = plural(t.chars, text.length, pageLang);
+        outLen.textContent = plural(t.chars, len, pageLang);
         fmtBtns.forEach(function (b) { var on = b.dataset.fmt === fmt; b.classList.toggle('active', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
         if (state.svg) {
           encBtns.forEach(function (b) { var on = b.dataset.enc === state.enc; b.classList.toggle('active', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
         }
-        var tooLong = text.length > DISPLAY_LIMIT;
+        var tooLong = len > DISPLAY_LIMIT;
         output.hidden = tooLong;
         tooLongEl.hidden = !tooLong;
         dlTxt.hidden = !tooLong;
         output.value = tooLong ? '' : text;
-        if (tooLong) tooLongEl.textContent = fill(t.tooLong, { chars: plural(t.chars, text.length, pageLang) });
+        if (tooLong) tooLongEl.textContent = fill(t.tooLong, { chars: plural(t.chars, len, pageLang) });
       }
 
       function resetEncode() {
@@ -801,13 +869,15 @@ const base64Href = (lang === 'en' ? '' : '/' + lang) + '/tools/base64/';
           }
           var typed = new Blob([file], { type: det.mime });
           var svg = det.key === 'svg';
-          return Promise.all([readAsBase64(typed), svg ? file.arrayBuffer() : null]).then(function (res) {
+          var lazy = !svg && file.size > LAZY_LIMIT;
+          return Promise.all([lazy ? null : readAsBase64(typed), svg ? file.arrayBuffer() : null]).then(function (res) {
             if (my !== job) return;
             var base64 = res[0];
-            var b64Uri = dataUriBase64(det.mime, base64);
+            var b64Uri = base64 == null ? null : dataUriBase64(det.mime, base64);
             var urlUri = svg ? dataUriSvg(new Uint8Array(res[1])) : '';
             state = {
               fileName: file.name, size: file.size, det: det, base64: base64, b64Uri: b64Uri, urlUri: urlUri,
+              b64Length: base64Length(file.size), blob: typed, text: null, pending: null,
               svg: svg, enc: svg && urlUri.length < b64Uri.length ? 'url' : 'base64', width: 0, height: 0
             };
             var notes = [];
@@ -853,8 +923,8 @@ const base64Href = (lang === 'en' ? '' : '/' + lang) + '/tools/base64/';
         if (w > 0 && h > 0) parts.push(fill(t.dims, { w: w, h: h }));
         parts.push(fill(t.sizeLine, {
           bytes: plural(t.bytes, state.size, pageLang),
-          chars: plural(t.chars, state.base64.length, pageLang),
-          pct: growthPercent(state.size, state.base64.length)
+          chars: plural(t.chars, state.base64 != null ? state.base64.length : state.b64Length, pageLang),
+          pct: growthPercent(state.size, state.base64 != null ? state.base64.length : state.b64Length)
         }));
         infoEl.textContent = parts.join(' \u00b7 ');
       }
@@ -910,11 +980,21 @@ const base64Href = (lang === 'en' ? '' : '/' + lang) + '/tools/base64/';
         }
       });
 
-      fmtBtns.forEach(function (b) { b.addEventListener('click', function () { fmt = b.dataset.fmt; render(); }); });
-      encBtns.forEach(function (b) { b.addEventListener('click', function () { if (state) { state.enc = b.dataset.enc; render(); } }); });
+      fmtBtns.forEach(function (b) { b.addEventListener('click', function () { fmt = b.dataset.fmt; if (state) state.text = null; render(); }); });
+      encBtns.forEach(function (b) { b.addEventListener('click', function () { if (state) { state.enc = b.dataset.enc; state.text = null; render(); } }); });
+
+      function withText(cb) {
+        if (!state) return;
+        if (state.text != null) { cb(state.text); return; }
+        setStatus(fill(t.encodingLarge, { size: formatSize(state.size, pageLang) }), 'info');
+        materialize().then(function (text) { setStatus(''); cb(text); }, function () { setStatus(t.readFailed, 'error'); });
+      }
 
       copyBtn.addEventListener('click', function () {
-        var text = state ? state.text : '';
+        withText(function (text) { copyOutput(text); });
+      });
+
+      function copyOutput(text) {
         if (!text) return;
         var done = function () {
           copyBtn.textContent = t.copied;
@@ -930,16 +1010,17 @@ const base64Href = (lang === 'en' ? '' : '/' + lang) + '/tools/base64/';
         };
         if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
         else fallback();
-      });
+      }
 
       dlTxt.addEventListener('click', function () {
-        if (!state) return;
-        var url = URL.createObjectURL(new Blob([state.text], { type: 'text/plain' }));
-        var a = document.createElement('a');
-        a.href = url;
-        a.download = altFromName(state.fileName || 'image') + '.' + fmt + '.txt';
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+        withText(function (text) {
+          var url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = altFromName((state && state.fileName) || 'image') + '.' + fmt + '.txt';
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+        });
       });
 
       /* ── Decode ── */

@@ -654,7 +654,6 @@ const SENSITIVE_COMPONENT = /\b(password|passphrase|secret[ _-]?key|client[ _-]?
 const SENSITIVE_EXEMPT = {
   'ai-token-counter': '"token" means LLM tokens; the input is prompt text, not a credential',
   'barcode-generator': '"bearer" is the ITF bearer bar, not an auth scheme',
-  'markdown-to-word': '"credentials" is the fetch option `credentials: \'omit\'` for web images',
   'url-parser': 'general URL parser; a password appears only when the pasted URL carries one, is masked until revealed, and is neither stored nor sent',
   'qr-code-decoder': 'general QR reader; a Wi-Fi password appears only when the scanned code holds one',
   'ssl-certificate-decoder': 'decodes public X.509 certificates; PEM private-key blocks and PKCS #8 / PKCS #12 files are detected and skipped, never decoded, and input that contains them is not saved',

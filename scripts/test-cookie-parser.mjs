@@ -661,7 +661,7 @@ for (const lang of ['zh', 'ja', 'ko']) {
   check('v2: simulation results are a localized keyboard-accessible region', markup.includes('id="ck-sim-out" class="ck-sim-out" tabindex="0" role="region" aria-label={T.simTitle} aria-live="polite"'));
   check('v2: simulation results keep a fixed scrolling height while URL hints keep natural height', /\.ck-wrap :global\(\.ck-sim-out:has\(\.ck-sim-head\)\) \{[^}]*height: min\(30svh, 10rem\);[^}]*overflow: auto;[^}]*flex: none;/.test(css) && !/\.ck-sim-out \{[^}]*height:/.test(css));
   check('v2: redundant Parse button, binding and translation key are removed', !source.includes('ck-parse') && Object.values(STRINGS).every((v) => !('parse' in v)));
-  check('v2: input still parses without a button', source.includes("inputEl.addEventListener('input', function () { render(false); });"));
+  check('v2: input still parses without a button', /inputEl\.addEventListener\('input', function \(\) \{\s*clearTimeout\(inputTimer\);\s*inputTimer = setTimeout\(function \(\) \{ render\(false\); \}, 150\);/.test(source));
   check('v2: listed as an analyze page', readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8').includes("'cookie-parser': 'analyze'"));
 
   // Astro must remove :global before browsers can apply the simulator's size constraint.
@@ -691,7 +691,8 @@ for (const lang of ['zh', 'ja', 'ko']) {
         get textContent() { return text + this.children.map((c) => c.textContent).join(''); },
         set textContent(v) { text = String(v); this.children = []; },
         get firstChild() { return this.children[0] || null; },
-        appendChild(c) { this.children.push(c); return c; },
+        appendChild(c) { if (c.tag === 'fragment') { for (const k of c.children) this.children.push(k); } else this.children.push(c); return c; },
+        insertBefore(c, ref) { const list = c.tag === 'fragment' ? c.children : [c]; const i = this.children.indexOf(ref); if (i < 0) this.children.push(...list); else this.children.splice(i, 0, ...list); return c; },
         setAttribute(k, v) { this.attrs[k] = String(v); },
         getAttribute(k) { return this.attrs[k] ?? null; },
         addEventListener(k, fn) { if (!events.has(k)) events.set(k, []); events.get(k).push(fn); },
@@ -722,6 +723,7 @@ for (const lang of ['zh', 'ja', 'ko']) {
       getElementById(id) { if (!nodes.has(id)) throw new Error('Missing rendered id: ' + id); return nodes.get(id); },
       querySelectorAll(selector) { if (selector !== '#ck-wrap [data-mode]') throw new Error('Unexpected selector: ' + selector); return modes; },
       createElement: element,
+      createDocumentFragment() { return element('fragment'); },
       createTextNode(value) { const n = element('text'); n.textContent = value; return n; }
     });
     const ctx = { S: CLIENT_T, pageLang: lang, document, URL, TextEncoder, TextDecoder, atob, btoa, console,
@@ -734,7 +736,8 @@ for (const lang of ['zh', 'ja', 'ko']) {
     ctx.window = ctx;
     vm.runInNewContext(source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1], ctx, { filename: 'CookieParserTool.astro' });
     return { nodes, copied, modes, document, get loads() { return loads; },
-      set(id, value, event = 'input') { const n = nodes.get(id); n.value = value; n.dispatch(event); },
+      set(id, value, event = 'input') { const n = nodes.get(id); n.value = value; n.dispatch(event); if (event === 'input') this.tick(200); },
+      tick(ms) { for (const [id, t] of [...timers]) if (t.delay <= ms) { timers.delete(id); t.fn(); } },
       flush() { for (const [id, t] of timers) if (t.delay === 0) { timers.delete(id); t.fn(); } },
       release() { releasePsl(PSL_DATA); }
     };

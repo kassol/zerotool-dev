@@ -50,6 +50,7 @@ const STRINGS = new Function(stringsSrc)();
 let failures = 0;
 let passes = 0;
 function check(name, ok, detail) {
+
   if (ok) { passes++; return; }
   failures++;
   console.log('FAIL: ' + name + (detail !== undefined ? ' — ' + detail : ''));
@@ -407,6 +408,11 @@ check('page script writes card text with textContent', /c\.text\.textContent = r
     check(l + ' mdx: nothing says the note is under the input box', !/输入框下方|入力欄の下|입력창 아래/.test(pages[l]));
   }
 }
+
+check('the input box does not wrap, so a 105k-character paste is not laid out per line',
+  /<textarea id="utc-input"[^>]*wrap="off"/.test(source));
+check('each card renders at most PREVIEW_CHARS characters and Copy uses the full text',
+  /var PREVIEW_CHARS = 2000;/.test(source) && /function fullText\(id\)/.test(source) && /copyText\(fullText\(id\)/.test(source));
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

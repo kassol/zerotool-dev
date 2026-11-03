@@ -708,6 +708,20 @@ const { tips: TIPS, ...CLIENT_S } = L;
         downloadUrl = null;
         downloadBtn.hidden = true;
       }
+      // A 200 MB file arrives in bounded slices: one arrayBuffer() call allocates and
+      // copies the whole file in a single task, which blocks the page for over 100 ms.
+      async function readFileChunks(file) {
+        var CHUNK = 8 * 1024 * 1024;
+        if (file.size <= CHUNK) return new Uint8Array(await file.arrayBuffer());
+        var out = new Uint8Array(file.size);
+        for (var off = 0; off < file.size; off += CHUNK) {
+          var end = Math.min(file.size, off + CHUNK);
+          var buf = await file.slice(off, end).arrayBuffer();
+          out.set(new Uint8Array(buf), off);
+        }
+        return out;
+      }
+
       function offerDownload(bytes, name) {
         clearDownload();
         downloadUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
@@ -829,7 +843,7 @@ const { tips: TIPS, ...CLIENT_S } = L;
         try {
           if (file) {
             if (file.size > MAX_FILE_BYTES + (kind === 'encrypt' ? 0 : 64)) throw fail('fileSize', { bytes: file.size });
-            var input = new Uint8Array(await file.arrayBuffer());
+            var input = await readFileChunks(file);
             if (operation !== job) return;
             var out, name;
             if (kind === 'encrypt') {

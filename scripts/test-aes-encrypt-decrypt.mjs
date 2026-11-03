@@ -71,6 +71,7 @@ const E = new Function(block + '\nreturn {' + names.map((n) => n + ': typeof ' +
 let failures = 0;
 let passes = 0;
 function check(name, ok, detail) {
+
   if (ok) { passes++; return; }
   failures++;
   console.log('FAIL: ' + name + (detail !== undefined ? ' — ' + detail : ''));
@@ -587,6 +588,9 @@ if (need('encryptFile') && need('decryptFile')) {
     check(lang + ' mdx: the limits section stays', /<h2>(Limitations|限制|制限|제한 사항)<\/h2>\n<ul>/.test(body));
   }
 }
+
+check('files are read in bounded slices instead of one arrayBuffer()',
+  /function readFileChunks\(file\)/.test(source) && /await readFileChunks\(file\)/.test(source) && /if \(file\.size <= CHUNK\) return new Uint8Array\(await file\.arrayBuffer\(\)\);/.test(source) && /file\.slice\(off, end\)\.arrayBuffer\(\)/.test(source));
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
