@@ -97,5 +97,10 @@ Review on 2026-12-01 with the same queries and filters: referring domains and GS
 
 ## 2026-11-04 执行记录
 
-- dev.to：已发布 [Five Markdown Renderers, One Table: Where They Actually Differ](https://dev.to/kassol/five-markdown-renderers-one-table-where-they-actually-differ-509c)。正文含两处链向 `https://zerotool.dev/blog/markdown-table-generator-guide/` 与 `https://zerotool.dev/tools/markdown-table-generator/`，2026-11-04 用 curl 核对 `rel="noopener noreferrer"`（无 nofollow），已记入 `backlink-ledger.csv`。
+- dev.to：2026-11-04 发布五篇，每篇两处链向 `zerotool.dev`，curl 核对 `rel="noopener noreferrer"`（无 nofollow），均已记入 `backlink-ledger.csv`：
+  - [Five Markdown Renderers, One Table: Where They Actually Differ](https://dev.to/kassol/five-markdown-renderers-one-table-where-they-actually-differ-509c)
+  - [111, 133, 172: The Same 192 Characters in Three Tokenizers](https://dev.to/kassol/111-133-172-the-same-192-characters-in-three-tokenizers-lp)
+  - [QR Capacity Is a Mode Problem Before It Is a Size Problem](https://dev.to/kassol/qr-capacity-is-a-mode-problem-before-it-is-a-size-problem-5535)
+  - [RFC 6238 by Hand: One TOTP Code, 18 Vectors, and the 32-Byte Key Trap](https://dev.to/kassol/rfc-6238-by-hand-one-totp-code-18-vectors-and-the-32-byte-key-trap-5f5b)
+  - [One Domain, Different Answers: Reading Cloudflare and Google DoH JSON](https://dev.to/kassol/one-domain-different-answers-reading-cloudflare-and-google-doh-json-206m)
 - 免账号投稿逐项核对后均未执行：Cooperpress 的 Airtable 分享链接返回 “This private share link is no longer available.”；Console.dev 只提供 `hello@console.dev` 邮件；Markdown Guide 需要 GitHub wiki 编辑；Web Tools Weekly 需要 X / Bluesky 私信。按 Sir 2026-11-04 的决定，邮件与其余账号暂不做。
