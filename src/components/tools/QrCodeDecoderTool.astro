@@ -992,7 +992,7 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
         preview.width = Math.round(source.width * s);
         preview.height = Math.round(source.height * s);
         var ctx = preview.getContext('2d');
-        ctx.drawImage(source, 0, 0, preview.width, preview.height);
+        ctx.drawImage(source.el, 0, 0, preview.width, preview.height);
         var color = getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim() || '#b45309';
         ctx.lineWidth = Math.max(2, preview.width / 160);
         results.forEach(function (entry, i) {
@@ -1015,13 +1015,13 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
         });
       }
 
-      function showResults(canvas, rawResults, scaledFrom) {
+      function showResults(source, rawResults, scaledFrom) {
         copyGeneration++;
         var sorted = sortResults(rawResults).map(function (r) { return { raw: r, charset: null }; });
-        current = { canvas: canvas, results: sorted };
+        current = { source: source, results: sorted };
         resultsEl.textContent = '';
         sorted.forEach(function (entry, i) { resultsEl.appendChild(renderCard(entry, i, sorted.length)); });
-        drawPreview(canvas, sorted);
+        drawPreview(source, sorted);
         resultArea.hidden = false;
         inputs.classList.add('qrd-compact');
         var msg = fmt(sorted.length > 1 ? t.foundMany : t.found, { n: sorted.length });
@@ -1038,12 +1038,66 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
         });
       }
 
-      function showNone(canvas) {
+      function showNone(source) {
         current = null;
         resultsEl.textContent = '';
-        if (canvas) { drawPreview(canvas, []); resultArea.hidden = false; inputs.classList.add('qrd-compact'); }
+        if (source) { drawPreview(source, []); resultArea.hidden = false; inputs.classList.add('qrd-compact'); }
         setStatus(t.errNoQr, 'error');
         track('decode_none');
+      }
+
+      // Decoding runs in a Worker: a 12 MP image takes about 100 ms in zxing's WebAssembly,
+      // and the canvas read is another copy of the pixels. The Worker builds from a Blob so
+      // this inline script keeps its define:vars strings; failures fall back to this page.
+      var decodeWorker = null;
+      var decodeJob = 0;
+      function ensureDecodeWorker() {
+        if (decodeWorker) return decodeWorker;
+        var src = [
+          'var OPTIONS = ' + JSON.stringify(READER_OPTIONS) + ';',
+          'var READY = null;',
+          'function ready() {',
+          '  if (READY) return READY;',
+          '  if (!self.ZXingWASM) importScripts(self.location.origin + "/vendor/zxing-reader.js");',
+          '  var Z = self.ZXingWASM;',
+          '  READY = Z.prepareZXingModule({ overrides: { locateFile: function (path, prefix) { return /\\.wasm$/.test(path) ? self.location.origin + "/vendor/zxing-reader.wasm" : prefix + path; } }, fireImmediately: true }).then(function () { return Z; });',
+          '  return READY;',
+          '}',
+          'self.onmessage = async function (event) {',
+          '  var d = event.data;',
+          '  try {',
+          '    var Z = await ready();',
+          '    var bitmap = await createImageBitmap(d.blob);',
+          '    var s = Math.min(1, Math.sqrt(16777216 / (bitmap.width * bitmap.height)));',
+          '    var w = Math.max(1, Math.floor(bitmap.width * s));',
+          '    var h = Math.max(1, Math.floor(bitmap.height * s));',
+          '    var canvas = new OffscreenCanvas(w, h);',
+          '    var ctx = canvas.getContext("2d", { willReadFrequently: true });',
+          '    ctx.drawImage(bitmap, 0, 0, w, h);',
+          '    var results = await Z.readBarcodes(ctx.getImageData(0, 0, w, h), OPTIONS);',
+          '    var pw = Math.min(bitmap.width, 480);',
+          '    var ph = Math.max(1, Math.round(bitmap.height * pw / bitmap.width));',
+          '    var preview = await createImageBitmap(bitmap, { resizeWidth: pw, resizeHeight: ph, resizeQuality: "high" });',
+          '    self.postMessage({ id: d.id, ok: true, results: results, width: w, height: h, naturalWidth: bitmap.width, naturalHeight: bitmap.height, scaled: s < 1, preview: preview }, [preview]);',
+          '  } catch (e) { self.postMessage({ id: d.id, ok: false, error: String(e && e.message || e) }); }',
+          '};',
+        ].join('\n');
+        decodeWorker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+        return decodeWorker;
+      }
+      function decodeInWorker(blob) {
+        if (typeof Worker !== 'function' || typeof OffscreenCanvas !== 'function' || typeof createImageBitmap !== 'function') return Promise.resolve(null);
+        var worker;
+        try { worker = ensureDecodeWorker(); } catch (e) { return Promise.resolve(null); }
+        var id = ++decodeJob;
+        return new Promise(function (resolve) {
+          function cleanup() { worker.removeEventListener('message', onMessage); worker.removeEventListener('error', onError); }
+          function onMessage(e) { if (e.data.id !== id) return; cleanup(); resolve(e.data.ok ? e.data : null); }
+          function onError() { cleanup(); resolve(null); }
+          worker.addEventListener('message', onMessage);
+          worker.addEventListener('error', onError);
+          worker.postMessage({ id: id, blob: blob });
+        });
       }
 
       function loadImage(blob) {
@@ -1073,26 +1127,40 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
         }
         var job = busy;
         setStatus(readerPromise ? t.decoding : t.loading, 'info');
-        Promise.all([ensureReader().catch(function () { return null; }), loadImage(blob).catch(function () { return null; })]).then(function (res) {
-          if (job !== busy) { if (res[1]) URL.revokeObjectURL(res[1].url); return; }
-          var Z = res[0], loaded = res[1];
-          if (!loaded) { setStatus(t.errRead, 'error'); return; }
-          if (!Z) { URL.revokeObjectURL(loaded.url); setStatus(t.errLoad, 'error'); return; }
-          setStatus(t.decoding, 'info');
-          var w = loaded.img.naturalWidth, h = loaded.img.naturalHeight;
-          var size = fitSize(w, h);
-          var canvas = document.createElement('canvas');
-          canvas.width = size.width; canvas.height = size.height;
-          var ctx = canvas.getContext('2d', { willReadFrequently: true });
-          ctx.drawImage(loaded.img, 0, 0, size.width, size.height);
-          URL.revokeObjectURL(loaded.url);
-          var data = ctx.getImageData(0, 0, size.width, size.height);
-          return Z.readBarcodes(data, READER_OPTIONS).then(function (results) {
-            if (job !== busy) return;
-            var valid = results.filter(function (r) { return r.isValid; });
-            if (!valid.length) { showNone(canvas); return; }
-            showResults(canvas, valid, size.scaled ? { w: w, h: h, sw: size.width, sh: size.height } : null);
+        // The Worker decodes and returns a small preview bitmap, so the page never decodes
+        // or reads the full-resolution pixels. Without a Worker, load this page's reader
+        // and image and decode here as before.
+        decodeInWorker(blob).then(function (decoded) {
+          if (job !== busy) return;
+          if (decoded) {
+            var dSource = { el: decoded.preview, width: decoded.width, height: decoded.height };
+            var dValid = decoded.results.filter(function (r) { return r.isValid; });
+            if (!dValid.length) { showNone(dSource); return; }
+            showResults(dSource, dValid, decoded.scaled ? { w: decoded.naturalWidth, h: decoded.naturalHeight, sw: decoded.width, sh: decoded.height } : null);
             if (source) track('source_' + source);
+            return;
+          }
+          return Promise.all([ensureReader().catch(function () { return null; }), loadImage(blob).catch(function () { return null; })]).then(function (res) {
+            if (job !== busy) { if (res[1]) URL.revokeObjectURL(res[1].url); return; }
+            var Z = res[0], loaded = res[1];
+            if (!loaded) { setStatus(t.errRead, 'error'); return; }
+            if (!Z) { URL.revokeObjectURL(loaded.url); setStatus(t.errLoad, 'error'); return; }
+            var w = loaded.img.naturalWidth, h = loaded.img.naturalHeight;
+            URL.revokeObjectURL(loaded.url);
+            var size = fitSize(w, h);
+            var canvas = document.createElement('canvas');
+            canvas.width = size.width; canvas.height = size.height;
+            var ctx = canvas.getContext('2d', { willReadFrequently: true });
+            ctx.drawImage(loaded.img, 0, 0, size.width, size.height);
+            var data = ctx.getImageData(0, 0, size.width, size.height);
+            return Z.readBarcodes(data, READER_OPTIONS).then(function (results) {
+              if (job !== busy) return;
+              var valid = results.filter(function (r) { return r.isValid; });
+              var fallback = { el: canvas, width: size.width, height: size.height };
+              if (!valid.length) { showNone(fallback); return; }
+              showResults(fallback, valid, size.scaled ? { w: w, h: h, sw: size.width, sh: size.height } : null);
+              if (source) track('source_' + source);
+            });
           });
         }).catch(function () { if (job === busy) setStatus(t.errRead, 'error'); });
       }
@@ -1216,7 +1284,7 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
             var valid = results.filter(function (r) { return r.isValid; });
             if (valid.length) {
               stopCamera();
-              showResults(canvas, valid, null);
+              showResults({ el: canvas, width: size.width, height: size.height }, valid, null);
               track('source_camera');
             } else {
               scanTimer = setTimeout(function () { scanFrame(Z, job); }, 120);

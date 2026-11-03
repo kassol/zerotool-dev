@@ -1057,18 +1057,17 @@ const FIELDS = ['hex', 'rgb', 'hsl', 'oklch', 'p3'];
         var ctx = canvas.getContext('2d', { willReadFrequently: true });
         ctx.clearRect(0, 0, fit.w, fit.h);
         ctx.drawImage(el, 0, 0, fit.w, fit.h);
-        var p3ctx = null;
+        // The Display P3 copy is another 28 MP draw. Build it on the first pick,
+        // not while the image opens, so opening stays a single draw.
+        var p3supported = false;
         try {
           var c2 = document.createElement('canvas');
-          c2.width = fit.w; c2.height = fit.h;
-          var x2 = c2.getContext('2d', { colorSpace: 'display-p3', willReadFrequently: true });
-          if (x2 && x2.getContextAttributes && x2.getContextAttributes().colorSpace === 'display-p3') {
-            x2.drawImage(el, 0, 0, fit.w, fit.h);
-            p3ctx = x2;
-          }
-        } catch (e) { p3ctx = null; }
+          c2.width = 1; c2.height = 1;
+          var x2 = c2.getContext('2d', { colorSpace: 'display-p3' });
+          p3supported = !!(x2 && x2.getContextAttributes && x2.getContextAttributes().colorSpace === 'display-p3');
+        } catch (e) { p3supported = false; }
         URL.revokeObjectURL(url);
-        img = { w: fit.w, h: fit.h, ctx: ctx, p3ctx: p3ctx };
+        img = { w: fit.w, h: fit.h, ctx: ctx, p3ctx: null, p3pending: p3supported, el: el };
         cursor = null;
         marker.hidden = true;
         hintEl.textContent = t.imageHint;
@@ -1181,6 +1180,18 @@ const FIELDS = ['hex', 'rgb', 'hsl', 'oklch', 'p3'];
       var x0 = Math.max(0, x - half), y0 = Math.max(0, y - half);
       var x1 = Math.min(img.w - 1, x + half), y1 = Math.min(img.h - 1, y + half);
       var w = x1 - x0 + 1, h = y1 - y0 + 1;
+      if (img.p3pending) {
+        img.p3pending = false;
+        try {
+          var c3 = document.createElement('canvas');
+          c3.width = img.w; c3.height = img.h;
+          var x3 = c3.getContext('2d', { colorSpace: 'display-p3', willReadFrequently: true });
+          if (x3 && x3.getContextAttributes && x3.getContextAttributes().colorSpace === 'display-p3') {
+            x3.drawImage(img.el, 0, 0, img.w, img.h);
+            img.p3ctx = x3;
+          }
+        } catch (e) { img.p3ctx = null; }
+      }
       var px = sampleRegion(img.ctx.getImageData(x0, y0, w, h).data, w, h, x - x0, y - y0, size);
       var p3px = null;
       if (img.p3ctx) {

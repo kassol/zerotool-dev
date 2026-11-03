@@ -582,5 +582,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ': synchronous QR copy denial is handled without an event', !threw && !denied.tracks.some(x => x[1].startsWith('copy_')));
 }
 
+check('image decoding runs in a Worker with OffscreenCanvas and falls back to the page',
+  /function decodeInWorker\(blob\)/.test(source) && /new OffscreenCanvas\(w, h\)/.test(source) && /if \(typeof Worker !== 'function' \|\| typeof OffscreenCanvas !== 'function'/.test(source));
+
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

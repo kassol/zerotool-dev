@@ -653,5 +653,8 @@ check('tool pages carry checked examples', examples >= 8, examples + ' found');
   console.log(`v2 page layout: ${passes-before.passes} passed, ${failures-before.failures} failed`);
 }
 
+check('the Display P3 copy is built on the first pick, not on image open',
+  /p3pending: p3supported/.test(source) && /if \(img\.p3pending\)/.test(source) && !/x2\.drawImage\(el, 0, 0, fit\.w, fit\.h\);/.test(source));
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

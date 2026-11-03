@@ -549,7 +549,7 @@ if (need('encryptFile') && need('decryptFile')) {
   // Text status for all key/IV modes is checked by running the complete page in
   // test-aes-async-ui.mjs, including its captured input byte count.
   check('file success message: the same IV warning when a file is encrypted with an entered IV',
-    script.includes("var ivFile = kind === 'encrypt' && spec.iv;") && script.includes("setStatus(fmt(S.fileReady, { name: name, size: size(out.length) }) + (ivFile ? ' ' + S.ivWarning : ''), ivFile ? 'info' : 'success');"));
+    script.includes("var ivFile = kind === 'encrypt' && spec.iv;") && script.includes("setStatus(fmt(S.fileReady, { name: name, size: size(outSize) }) + (ivFile ? ' ' + S.ivWarning : ''), ivFile ? 'info' : 'success');"));
   const i18nRef = (l) => JSON.parse(readFileSync(join(root, 'src/i18n/' + l + '.json'), 'utf8'))['tool.reference'];
   const saltWord = { en: 'salt', zh: '盐', ja: 'ソルト', ko: '솔트' };
   for (const l of ['en', 'zh', 'ja', 'ko']) {
@@ -591,6 +591,9 @@ if (need('encryptFile') && need('decryptFile')) {
 
 check('files are read in bounded slices instead of one arrayBuffer()',
   /function readFileChunks\(file\)/.test(source) && /await readFileChunks\(file\)/.test(source) && /if \(file\.size <= CHUNK\) return new Uint8Array\(await file\.arrayBuffer\(\)\);/.test(source) && /file\.slice\(off, end\)\.arrayBuffer\(\)/.test(source));
+
+check('file encryption runs in a Worker built from the page engine block',
+  /function ensureFileWorker\(\)/.test(source) && /function runFileInWorker\(kind, spec, file\)/.test(source) && /typeof Worker === 'function' && SCRIPT_EL/.test(source));
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
